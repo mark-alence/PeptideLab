@@ -57,10 +57,10 @@ function alignAndScale(letter) {
   if (atoms.length > bbLen) {
     scDir = { x: atoms[bbLen].x, y: atoms[bbLen].y, z: atoms[bbLen].z };
   } else {
-    // Glycine: pick a direction perpendicular to backbone
-    scDir = Math.abs(xA.y) < 0.9
-      ? { x: 0, y: 1, z: 0 }
-      : { x: 1, y: 0, z: 0 };
+    // Glycine: use z-axis so the molecule lies flat and oxygens spread horizontally
+    scDir = Math.abs(xA.z) < 0.9
+      ? { x: 0, y: 0, z: 1 }
+      : { x: 0, y: 1, z: 0 };
   }
 
   // 4) Gram-Schmidt: yAxis = normalize(scDir - projection onto xAxis)
