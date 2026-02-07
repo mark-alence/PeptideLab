@@ -246,6 +246,62 @@ function HelpModal({ onClose }) {
       section('Other', [
         ['Lessons panel', 'Load preset peptide scenes'],
       ]),
+      React.createElement('hr', { className: 'help-divider' }),
+      React.createElement('h2', null, 'Visual Guide'),
+      // Atom colors
+      React.createElement('div', { className: 'help-section' },
+        React.createElement('h3', null, 'Atom Colors'),
+        ...[
+          ['#909090', 'Carbon (C)', 'Backbone and sidechain skeleton'],
+          ['#6699ff', 'Nitrogen (N)', 'Amino groups, ring nitrogens'],
+          ['#ff5555', 'Oxygen (O)', 'Carboxyl groups, hydroxyls'],
+          ['#eedd44', 'Sulfur (S)', 'Cysteine thiols, methionine thioethers'],
+        ].map(([color, label, detail], i) =>
+          React.createElement('div', { key: i, className: 'legend-row' },
+            React.createElement('span', { className: 'legend-swatch', style: { backgroundColor: color } }),
+            React.createElement('span', { className: 'legend-label' }, label),
+            React.createElement('span', { className: 'legend-detail' }, detail),
+          )
+        ),
+      ),
+      // Charge fields
+      React.createElement('div', { className: 'help-section' },
+        React.createElement('h3', null, 'Charge Fields'),
+        ...[
+          ['radial-gradient(circle, #ffcc33 0%, transparent 70%)', 'Yellow glow', 'Positive charge (Lys, Arg)'],
+          ['radial-gradient(circle, #ff5544 0%, transparent 70%)', 'Red glow', 'Negative charge (Asp, Glu)'],
+          ['radial-gradient(circle, #4488ff 0%, transparent 70%)', 'Blue pulse', 'pH-sensitive (His switches charge near pH 6)'],
+        ].map(([bg, label, detail], i) =>
+          React.createElement('div', { key: i, className: 'legend-row' },
+            React.createElement('span', { className: 'legend-swatch-field', style: { background: bg } }),
+            React.createElement('span', { className: 'legend-label' }, label),
+            React.createElement('span', { className: 'legend-detail' }, detail),
+          )
+        ),
+      ),
+      // Other visual elements
+      React.createElement('div', { className: 'help-section' },
+        React.createElement('h3', null, 'Other Elements'),
+        React.createElement('div', { className: 'legend-row' },
+          React.createElement('span', { className: 'legend-swatch-water' },
+            React.createElement('span', { className: 'legend-swatch', style: { backgroundColor: '#4488ff', width: '10px', height: '10px' } }),
+            React.createElement('span', { className: 'legend-swatch', style: { backgroundColor: '#ccddff', width: '7px', height: '7px' } }),
+            React.createElement('span', { className: 'legend-swatch', style: { backgroundColor: '#ccddff', width: '7px', height: '7px' } }),
+          ),
+          React.createElement('span', { className: 'legend-label' }, 'Water molecules'),
+          React.createElement('span', { className: 'legend-detail' }, 'Orbit polar/charged sidechains'),
+        ),
+        React.createElement('div', { className: 'legend-row' },
+          React.createElement('span', { className: 'legend-swatch', style: { backgroundColor: '#ffdd55', width: '12px', height: '4px', borderRadius: '2px' } }),
+          React.createElement('span', { className: 'legend-label' }, '+ / \u2013 symbols'),
+          React.createElement('span', { className: 'legend-detail' }, 'Charge indicators floating above charged groups'),
+        ),
+        React.createElement('div', { className: 'legend-row' },
+          React.createElement('span', { className: 'legend-swatch', style: { backgroundColor: '#777', width: '14px', height: '3px', borderRadius: '2px' } }),
+          React.createElement('span', { className: 'legend-label' }, 'Bonds'),
+          React.createElement('span', { className: 'legend-detail' }, 'Single bonds; double bonds shown as parallel lines'),
+        ),
+      ),
       React.createElement('button', { className: 'help-close', onClick: onClose }, 'Got it'),
     ),
   );

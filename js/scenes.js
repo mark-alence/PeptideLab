@@ -108,10 +108,10 @@ export const SCENES = [
     layout: [['C', 'M']],
   },
   {
-    id: 'identical-backbone',
-    name: 'Identical Backbone',
-    description: 'Every amino acid shares the exact same backbone structure: an amino group (N), alpha carbon (CA), carboxyl group (C), and oxygen (O). Only the sidechain differs. Three glycines make this obvious since glycine\'s sidechain is just a hydrogen atom \u2014 pure backbone with nothing added.',
-    layout: [['G', 'G', 'G']],
+    id: 'hydrophilic-surface',
+    name: 'Hydrophilic Surface',
+    description: 'Hydrophilic amino acids are found on the surface of folded proteins, where they interact favorably with the surrounding water. Their polar sidechains form hydrogen bonds with water molecules, keeping the protein soluble. Serine, threonine, asparagine, glutamine, aspartate, glutamate, lysine, and arginine all prefer the aqueous environment, in contrast to the hydrophobic residues buried in the protein core.',
+    layout: [['S', 'T', 'N', 'Q'], ['D', 'E', 'K', 'R']],
   },
   {
     id: 'histidine-the-switch',
