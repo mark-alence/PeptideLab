@@ -21,7 +21,7 @@ export const camera3D = new THREE.PerspectiveCamera(
 // Start elevated, looking at grid center
 const cx = GRID_W / 2;
 const cz = GRID_H / 2;
-camera3D.position.set(cx, 40, cz + 35);
+camera3D.position.set(cx, 25, cz + 30);
 
 // --- WebGL Renderer ---
 const renderer = new THREE.WebGLRenderer({ antialias: true });

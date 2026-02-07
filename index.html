@@ -116,7 +116,7 @@
   }
 
   .palette-title {
-    font-size: 0.85rem;
+    font-size: 0.95rem;
     color: #58a6ff;
     font-weight: bold;
     margin-bottom: 10px;
@@ -128,7 +128,7 @@
   }
 
   .palette-group-label {
-    font-size: 0.65rem;
+    font-size: 0.75rem;
     font-weight: bold;
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -165,12 +165,12 @@
   }
 
   .palette-letter {
-    font-size: 1rem;
+    font-size: 1.1rem;
     font-weight: bold;
   }
 
   .palette-name {
-    font-size: 0.55rem;
+    font-size: 0.65rem;
     color: #888;
     margin-top: 1px;
   }
@@ -359,6 +359,123 @@
     color: #555;
     margin-top: 8px;
     font-style: italic;
+  }
+
+  /* ========== Help Button ========== */
+  .help-btn {
+    position: absolute;
+    top: 56px;
+    right: 16px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: rgba(18, 25, 38, 0.90);
+    border: 1px solid #2d3b4f;
+    color: #58a6ff;
+    font-family: 'Courier New', monospace;
+    font-size: 1.1rem;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    transition: all 0.2s;
+    z-index: 20;
+  }
+  .help-btn:hover {
+    background: rgba(88, 166, 255, 0.15);
+    border-color: #58a6ff;
+    box-shadow: 0 0 10px #58a6ff44;
+  }
+
+  /* ========== Help Modal ========== */
+  .help-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    pointer-events: auto;
+    animation: fadeIn 0.15s ease-out;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  .help-modal {
+    background: rgba(18, 25, 38, 0.97);
+    border: 1px solid #2d3b4f;
+    border-radius: 6px;
+    padding: 24px 28px;
+    max-width: 480px;
+    width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+    animation: slideUp 0.2s ease-out;
+  }
+
+  .help-modal h2 {
+    font-size: 1.1rem;
+    color: #58a6ff;
+    margin-bottom: 16px;
+    letter-spacing: 0.08em;
+  }
+
+  .help-section {
+    margin-bottom: 14px;
+  }
+
+  .help-section h3 {
+    font-size: 0.8rem;
+    color: #79c0ff;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .help-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 3px 0;
+    font-size: 0.75rem;
+  }
+
+  .help-key {
+    color: #ccc;
+    background: rgba(40, 50, 65, 0.6);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    white-space: nowrap;
+  }
+
+  .help-desc {
+    color: #999;
+    text-align: right;
+    margin-left: 12px;
+  }
+
+  .help-close {
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    color: #58a6ff;
+    background: none;
+    border: 1px solid #2d3b4f;
+    border-radius: 4px;
+    padding: 6px 20px;
+    cursor: pointer;
+    display: block;
+    margin: 16px auto 0;
+    transition: all 0.2s;
+  }
+  .help-close:hover {
+    background: rgba(88, 166, 255, 0.1);
+    border-color: #58a6ff;
   }
 
   /* ========== Scrollbar ========== */

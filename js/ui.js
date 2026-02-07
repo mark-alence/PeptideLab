@@ -205,6 +205,75 @@ function InfoPanel() {
   );
 }
 
+// --- Help Modal ---
+function HelpModal({ onClose }) {
+  const section = (title, rows) =>
+    React.createElement('div', { className: 'help-section' },
+      React.createElement('h3', null, title),
+      ...rows.map(([key, desc], i) =>
+        React.createElement('div', { key: i, className: 'help-row' },
+          React.createElement('span', { className: 'help-key' }, key),
+          React.createElement('span', { className: 'help-desc' }, desc),
+        )
+      ),
+    );
+
+  return React.createElement('div', {
+    className: 'help-overlay',
+    onClick: (e) => { if (e.target === e.currentTarget) onClose(); },
+  },
+    React.createElement('div', { className: 'help-modal' },
+      React.createElement('h2', null, 'Controls'),
+      section('Camera', [
+        ['Right-drag', 'Orbit around scene'],
+        ['Middle-drag', 'Pan camera'],
+        ['Scroll wheel', 'Zoom in / out'],
+      ]),
+      section('Building', [
+        ['Click palette item', 'Select amino acid'],
+        ['Click on grid', 'Place selected amino acid'],
+        ['Drag from palette', 'Drag & drop onto grid'],
+      ]),
+      section('Editing', [
+        ['Click placed residue', 'Select it for editing'],
+        ['Drag placed residue', 'Move it to a new cell'],
+        ['\u2190 \u2192 \u2191 \u2193', 'Rotate selected residue'],
+        ['R', 'Cycle side-chain rotamer'],
+        ['Backspace / X', 'Delete selected residue'],
+        ['Ctrl+Z / \u2318+Z', 'Undo (remove last placed)'],
+        ['Escape', 'Deselect / unfocus'],
+      ]),
+      section('Other', [
+        ['Lessons panel', 'Load preset peptide scenes'],
+      ]),
+      React.createElement('button', { className: 'help-close', onClick: onClose }, 'Got it'),
+    ),
+  );
+}
+
+// --- Help Button ---
+function HelpButton() {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.code === 'Slash' && e.shiftKey) setOpen(o => !o);
+      if (e.code === 'Escape' && open) { setOpen(false); e.stopPropagation(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  return React.createElement(React.Fragment, null,
+    React.createElement('button', {
+      className: 'help-btn',
+      onClick: () => setOpen(true),
+      title: 'Controls (Shift+?)',
+    }, '?'),
+    open && React.createElement(HelpModal, { onClose: () => setOpen(false) }),
+  );
+}
+
 // --- App Root ---
 export function App() {
   const [started, setStarted] = useState(false);
@@ -222,5 +291,6 @@ export function App() {
     React.createElement(Palette),
     React.createElement(ChainDisplay),
     React.createElement(InfoPanel),
+    React.createElement(HelpButton),
   );
 }
