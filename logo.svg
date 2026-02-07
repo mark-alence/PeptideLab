@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g filter="url(#glow)">
+    <!-- Bonds -->
+    <!-- N—Cα -->
+    <line x1="25" y1="60" x2="55" y2="60" stroke="#58a6ff" stroke-width="3" stroke-linecap="round"/>
+    <!-- Cα—C -->
+    <line x1="55" y1="60" x2="85" y2="75" stroke="#58a6ff" stroke-width="3" stroke-linecap="round"/>
+    <!-- C=O (double bond) -->
+    <line x1="85" y1="75" x2="105" y2="60" stroke="#58a6ff" stroke-width="3" stroke-linecap="round"/>
+    <line x1="87" y1="78" x2="107" y2="63" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+    <!-- C—OH -->
+    <line x1="85" y1="75" x2="100" y2="95" stroke="#58a6ff" stroke-width="3" stroke-linecap="round"/>
+    <!-- Cα—R (side chain going up) -->
+    <line x1="55" y1="60" x2="55" y2="30" stroke="#58a6ff" stroke-width="3" stroke-linecap="round"/>
+    <!-- Cα—H -->
+    <line x1="55" y1="60" x2="42" y2="78" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" opacity="0.4"/>
+
+    <!-- Atoms -->
+    <!-- N (amino) -->
+    <circle cx="25" cy="60" r="10" fill="#58a6ff" opacity="0.85"/>
+    <!-- Cα (central) -->
+    <circle cx="55" cy="60" r="8" fill="#58a6ff" opacity="0.6"/>
+    <!-- C (carboxyl carbon) -->
+    <circle cx="85" cy="75" r="7" fill="#58a6ff" opacity="0.6"/>
+    <!-- O (carbonyl) -->
+    <circle cx="105" cy="60" r="8" fill="#58a6ff" opacity="0.85"/>
+    <!-- OH -->
+    <circle cx="100" cy="95" r="8" fill="#58a6ff" opacity="0.85"/>
+    <!-- R group -->
+    <circle cx="55" cy="30" r="10" fill="#58a6ff" opacity="0.85"/>
+    <!-- H -->
+    <circle cx="42" cy="78" r="5" fill="#58a6ff" opacity="0.3"/>
+  </g>
+</svg>
