@@ -27,7 +27,7 @@ function TitleScreen({ onStart }) {
   return React.createElement('div', {
     className: 'title-screen' + (fade ? ' fade-out' : ''),
   },
-    React.createElement('h1', null, 'Amino Acid Builder'),
+    React.createElement('h1', null, 'PeptideLab'),
     React.createElement('p', { className: 'subtitle' }, 'Build your own protein chain'),
     React.createElement('button', { onClick: handleStart, className: 'start-btn' }, 'Start Building'),
     React.createElement('p', { className: 'controls-hint' },
