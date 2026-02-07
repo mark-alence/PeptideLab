@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Amino Acid Builder</title>
+
+<!-- CDN Dependencies -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+
+<!-- Three.js import map -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.162.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.162.0/examples/jsm/"
+  }
+}
+</script>
+
+<style>
+  /* ========== Reset + Base ========== */
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #000;
+    overflow: hidden;
+    font-family: 'Courier New', monospace;
+    color: #ddd;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ========== Canvas ========== */
+  #display {
+    position: absolute;
+    z-index: 1;
+  }
+
+  /* ========== UI Overlay ========== */
+  #ui-root {
+    position: absolute;
+    z-index: 10;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  #ui-root > * { pointer-events: auto; }
+
+  /* ========== Title Screen ========== */
+  .title-screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(ellipse at center, #1e2a3d 0%, #111824 70%, #0a0f18 100%);
+    z-index: 100;
+    transition: opacity 0.6s;
+  }
+  .title-screen.fade-out { opacity: 0; pointer-events: none; }
+
+  .title-screen h1 {
+    font-size: 2.4rem;
+    color: #58a6ff;
+    text-shadow: 0 0 20px #58a6ff66;
+    margin-bottom: 0.5rem;
+    letter-spacing: 0.15em;
+  }
+
+  .title-screen .subtitle {
+    font-size: 0.9rem;
+    color: #888;
+    margin-bottom: 2rem;
+  }
+
+  .start-btn {
+    font-family: 'Courier New', monospace;
+    font-size: 1.1rem;
+    padding: 0.6em 2em;
+    background: none;
+    border: 2px solid #58a6ff;
+    color: #58a6ff;
+    cursor: pointer;
+    transition: all 0.3s;
+    letter-spacing: 0.1em;
+  }
+  .start-btn:hover {
+    background: #58a6ff22;
+    box-shadow: 0 0 15px #58a6ff44;
+  }
+
+  .controls-hint {
+    margin-top: 2rem;
+    font-size: 0.7rem;
+    color: #555;
+  }
+
+  /* ========== Palette (left sidebar) ========== */
+  .palette {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 160px;
+    background: rgba(18, 25, 38, 0.90);
+    border-right: 1px solid #2d3b4f;
+    padding: 12px 8px;
+    overflow-y: auto;
+    pointer-events: auto;
+  }
+
+  .palette-title {
+    font-size: 0.85rem;
+    color: #58a6ff;
+    font-weight: bold;
+    margin-bottom: 10px;
+    letter-spacing: 0.08em;
+  }
+
+  .palette-group {
+    margin-bottom: 8px;
+  }
+
+  .palette-group-label {
+    font-size: 0.65rem;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 4px;
+    padding-left: 2px;
+  }
+
+  .palette-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+  }
+
+  .palette-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 44px;
+    padding: 4px 2px;
+    background: rgba(40, 50, 65, 0.5);
+    border: 2px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    color: #ddd;
+    transition: all 0.15s;
+  }
+  .palette-item:hover {
+    background: rgba(40, 50, 65, 0.85);
+  }
+  .palette-item.selected {
+    background: rgba(40, 50, 65, 0.85);
+    box-shadow: 0 0 6px rgba(88, 166, 255, 0.3);
+  }
+
+  .palette-letter {
+    font-size: 1rem;
+    font-weight: bold;
+  }
+
+  .palette-name {
+    font-size: 0.55rem;
+    color: #888;
+    margin-top: 1px;
+  }
+
+  /* ========== Chain Display (top bar) ========== */
+  .chain-display {
+    position: absolute;
+    top: 12px;
+    left: 180px;
+    right: 12px;
+    background: rgba(18, 25, 38, 0.85);
+    border: 1px solid #2d3b4f;
+    border-radius: 4px;
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    pointer-events: auto;
+  }
+
+  .chain-label {
+    font-size: 0.75rem;
+    color: #888;
+    white-space: nowrap;
+  }
+
+  .chain-sequence {
+    font-size: 0.85rem;
+    color: #58a6ff;
+    font-weight: bold;
+    letter-spacing: 0.15em;
+    word-break: break-all;
+  }
+
+  .chain-count {
+    font-size: 0.7rem;
+    color: #666;
+    white-space: nowrap;
+    margin-left: auto;
+  }
+
+  /* ========== Info Panel (bottom right) ========== */
+  .info-panel {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: min(320px, 40vw);
+    background: rgba(18, 25, 38, 0.90);
+    border: 1px solid #2d3b4f;
+    border-radius: 4px;
+    padding: 14px;
+    pointer-events: auto;
+    animation: slideUp 0.2s ease-out;
+  }
+
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .info-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .info-header h2 { font-size: 1rem; color: #58a6ff; }
+  .info-codes { font-size: 0.75rem; color: #888; }
+
+  .info-oneliner {
+    font-size: 0.8rem;
+    color: #aad;
+    font-style: italic;
+    margin-bottom: 6px;
+  }
+
+  .info-props {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px 12px;
+    font-size: 0.7rem;
+    color: #aaa;
+    margin-bottom: 6px;
+    padding: 5px 0;
+    border-top: 1px solid #2d3b4f;
+    border-bottom: 1px solid #2d3b4f;
+  }
+
+  .info-codons {
+    font-size: 0.65rem;
+    color: #888;
+    margin-bottom: 6px;
+  }
+
+  .info-legend {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.65rem;
+    color: #888;
+  }
+
+  .legend-atom {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+
+  .legend-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+  }
+
+  /* ========== Exhibit Labels (CSS2D) ========== */
+  .exhibit-label {
+    color: #ddd;
+    font-family: 'Courier New', monospace;
+    text-align: center;
+    pointer-events: none;
+    text-shadow: 0 0 8px rgba(0,0,0,0.8);
+  }
+  .exhibit-label .exhibit-name {
+    font-size: 13px;
+    font-weight: bold;
+  }
+  .exhibit-label .exhibit-codes {
+    font-size: 9px;
+    color: #999;
+    margin-top: 2px;
+  }
+
+  /* ========== Lessons ========== */
+  .lessons-section {
+    margin-bottom: 12px;
+    border-bottom: 1px solid #2d3b4f;
+    padding-bottom: 10px;
+  }
+
+  .lessons-toggle {
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    color: #58a6ff;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-weight: bold;
+    letter-spacing: 0.08em;
+    padding: 2px 0;
+    width: 100%;
+    text-align: left;
+  }
+  .lessons-toggle:hover { color: #79c0ff; }
+
+  .lessons-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 6px;
+  }
+
+  .lesson-item {
+    font-family: 'Courier New', monospace;
+    font-size: 0.68rem;
+    color: #aaa;
+    background: rgba(40, 50, 65, 0.4);
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 5px 8px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s;
+  }
+  .lesson-item:hover {
+    background: rgba(40, 50, 65, 0.8);
+    color: #ddd;
+  }
+  .lesson-item.active {
+    border-color: #58a6ff;
+    color: #58a6ff;
+  }
+
+  .info-hint {
+    font-size: 0.65rem;
+    color: #555;
+    margin-top: 8px;
+    font-style: italic;
+  }
+
+  /* ========== Scrollbar ========== */
+  .palette::-webkit-scrollbar { width: 4px; }
+  .palette::-webkit-scrollbar-track { background: transparent; }
+  .palette::-webkit-scrollbar-thumb { background: #2d3b4f; border-radius: 2px; }
+</style>
+</head>
+<body>
+  <canvas id="display"></canvas>
+  <div id="ui-root"></div>
+
+  <script type="module" src="js/game.js"></script>
+</body>
+</html>
