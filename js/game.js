@@ -6,7 +6,7 @@ import { startLoop } from './engine.js';
 import { GameEvents, App } from './ui.js';
 
 // 3D modules
-import { updateControls, render3D, resize3D, updateParticles, controls } from './renderer3d.js';
+import { updateControls, render3D, resize3D, updateParticles, controls, focusCamera, resetCamera, updateCameraAnim } from './renderer3d.js';
 import { createGrid } from './grid3d.js';
 import { updateStructures3D } from './structures3d.js';
 import { initInput, updateInput } from './input.js';
@@ -101,6 +101,19 @@ GameEvents.on('clearScene', () => {
   });
 });
 
+// --- Reset camera to grid center ---
+GameEvents.on('resetView', () => resetCamera());
+
+// --- Focus camera on tapped placed AA ---
+GameEvents.on('focusEntry', (data) => {
+  if (data.index == null) return;
+  const chain = getChain();
+  if (data.index < 0 || data.index >= chain.length) return;
+  const entry = chain[data.index];
+  const pos = cellToWorld(entry.col, entry.row);
+  focusCamera(pos.x, pos.z);
+});
+
 // --- Load a preset scene ---
 GameEvents.on('loadScene', (data) => {
   const scene = SCENES.find(s => s.id === data.id);
@@ -131,6 +144,7 @@ function update(dt) {
 
 // --- Render ---
 function render(alpha) {
+  updateCameraAnim();
   updateControls();
   updateParticles();
   updateStructures3D();
@@ -140,4 +154,8 @@ function render(alpha) {
 
 // --- Resize ---
 resize3D();
-window.addEventListener('resize', resize3D);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', resize3D);
+} else {
+  window.addEventListener('resize', resize3D);
+}

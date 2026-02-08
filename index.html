@@ -2,9 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>PeptideLab</title>
 <link rel="icon" type="image/svg+xml" href="logo.svg">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="theme-color" content="#111824">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
 <!-- Google Analytics -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-8Q17ZW004Z"></script>
@@ -32,6 +37,7 @@
 <style>
   /* ========== Reset + Base ========== */
   *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  * { -webkit-tap-highlight-color: transparent; }
 
   body {
     background: #000;
@@ -40,15 +46,22 @@
     color: #ddd;
     width: 100vw;
     height: 100vh;
+    height: 100dvh;
     display: flex;
     align-items: center;
     justify-content: center;
+    position: fixed;
+    top: 0;
+    left: 0;
+    touch-action: none;
+    overscroll-behavior: none;
   }
 
   /* ========== Canvas ========== */
   #display {
     position: absolute;
     z-index: 1;
+    touch-action: none;
   }
 
   /* ========== UI Overlay ========== */
@@ -87,6 +100,8 @@
     font-size: 1.05rem;
     color: #888;
     margin-bottom: 2rem;
+    padding: 0 20px;
+    text-align: center;
   }
 
   .start-btn {
@@ -109,9 +124,11 @@
     margin-top: 2rem;
     font-size: 1.0rem;
     color: #555;
+    padding: 0 20px;
+    text-align: center;
   }
 
-  /* ========== Palette (left sidebar) ========== */
+  /* ========== Palette (desktop: left sidebar) ========== */
   .palette {
     position: absolute;
     top: 0;
@@ -185,6 +202,10 @@
     margin-top: 1px;
   }
 
+  /* Category tabs — hidden on desktop, shown on mobile */
+  .palette-tabs { display: none; }
+  .palette-tab { display: none; }
+
   /* ========== Chain Display (top bar) ========== */
   .chain-display {
     position: absolute;
@@ -240,7 +261,7 @@
     border-color: #ff6666;
   }
 
-  /* ========== Info Panel (bottom right) ========== */
+  /* ========== Info Panel (desktop: bottom right card) ========== */
   .info-panel {
     position: absolute;
     bottom: 20px;
@@ -252,6 +273,53 @@
     padding: 14px;
     pointer-events: auto;
     animation: slideUp 0.2s ease-out;
+  }
+
+  /* ========== Info Toast (mobile: compact top bar) ========== */
+  .info-toast {
+    position: absolute;
+    top: 48px;
+    left: 8px;
+    right: 8px;
+    background: rgba(18, 25, 38, 0.95);
+    border: 1px solid #2d3b4f;
+    border-radius: 6px;
+    padding: 8px 36px 8px 12px;
+    pointer-events: auto;
+    animation: fadeIn 0.15s ease-out;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+  }
+
+  .info-toast-text {
+    font-size: 0.75rem;
+    color: #ccc;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .info-toast-text strong {
+    color: #58a6ff;
+  }
+
+  .info-toast-close {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: none;
+    color: #666;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .info-toast-close:active {
+    color: #aaa;
   }
 
   @keyframes slideUp {
@@ -332,7 +400,7 @@
     margin-top: 2px;
   }
 
-  /* ========== Lessons ========== */
+  /* ========== Lessons (desktop: in sidebar) ========== */
   .lessons-section {
     margin-bottom: 12px;
     border-bottom: 1px solid #2d3b4f;
@@ -387,6 +455,17 @@
     color: #555;
     margin-top: 8px;
     font-style: italic;
+  }
+
+  /* ========== Lessons Button + Dropdown (mobile only, hidden on desktop) ========== */
+  .lessons-btn { display: none; }
+  .lessons-dropdown { display: none; }
+  .lessons-dropdown-title {
+    font-size: 0.8rem;
+    color: #58a6ff;
+    font-weight: bold;
+    margin-bottom: 4px;
+    letter-spacing: 0.08em;
   }
 
   /* ========== Help Button ========== */
@@ -453,9 +532,7 @@
     letter-spacing: 0.08em;
   }
 
-  .help-section {
-    margin-bottom: 14px;
-  }
+  .help-section { margin-bottom: 14px; }
 
   .help-section h3 {
     font-size: 0.8rem;
@@ -525,14 +602,8 @@
     gap: 2px;
   }
 
-  .legend-label {
-    color: #ccc;
-  }
-
-  .legend-detail {
-    color: #888;
-    font-size: 0.65rem;
-  }
+  .legend-label { color: #ccc; }
+  .legend-detail { color: #888; font-size: 0.65rem; }
 
   .help-close {
     font-family: 'Courier New', monospace;
@@ -556,6 +627,260 @@
   .palette::-webkit-scrollbar { width: 4px; }
   .palette::-webkit-scrollbar-track { background: transparent; }
   .palette::-webkit-scrollbar-thumb { background: #2d3b4f; border-radius: 2px; }
+
+  /* ========== Reset View Button ========== */
+  .reset-view-btn {
+    position: absolute;
+    top: 56px;
+    right: 56px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: rgba(18, 25, 38, 0.90);
+    border: 1px solid #2d3b4f;
+    color: #58a6ff;
+    font-family: 'Courier New', monospace;
+    font-size: 1.1rem;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    transition: all 0.2s;
+    z-index: 20;
+  }
+  .reset-view-btn:hover {
+    background: rgba(88, 166, 255, 0.15);
+    border-color: #58a6ff;
+    box-shadow: 0 0 10px #58a6ff44;
+  }
+
+  /* ========== Action Bar (mobile only, hidden on desktop) ========== */
+  .action-bar { display: none; }
+  .action-btn { display: none; }
+
+  /* ========== UI Fade during camera gestures ========== */
+  .ui-faded > * {
+    opacity: 0.15 !important;
+    transition: opacity 0.2s;
+  }
+
+  /* ========================================================================
+     MOBILE LAYOUT
+     ======================================================================== */
+  @media (max-width: 768px) {
+    .title-screen h1 { font-size: 1.8rem; }
+    .title-screen .subtitle { font-size: 0.85rem; }
+    .controls-hint { font-size: 0.8rem; }
+
+    /* Palette → fixed bottom bar with category tabs */
+    .palette {
+      top: auto;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100%;
+      height: auto;
+      max-height: none;
+      overflow: visible;
+      border-right: none;
+      border-top: 1px solid #2d3b4f;
+      padding: 0;
+      padding-bottom: env(safe-area-inset-bottom);
+      background: rgba(18, 25, 38, 0.95);
+      z-index: 15;
+    }
+
+    .palette-title { display: none; }
+    .palette-group { display: none; }
+    .palette-group-label { display: none; }
+    .lessons-section { display: none; }
+
+    .palette-items {
+      display: flex;
+      flex-wrap: nowrap;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 10px 6px;
+    }
+
+    .palette-item {
+      flex: 1;
+      max-width: 64px;
+      min-height: 52px;
+      width: auto;
+      padding: 4px 2px;
+      border-radius: 6px;
+      justify-content: center;
+    }
+    .palette-item:hover { background: rgba(40, 50, 65, 0.5); }
+    .palette-item:active {
+      background: rgba(40, 50, 65, 0.85);
+      transform: scale(0.95);
+    }
+
+    .palette-letter { font-size: 1.15rem; }
+    .palette-name { font-size: 0.55rem; }
+
+    .palette-tabs {
+      display: flex;
+      border-top: 1px solid #2d3b4f;
+    }
+
+    .palette-tab {
+      display: block;
+      flex: 1;
+      font-family: 'Courier New', monospace;
+      font-size: 0.6rem;
+      font-weight: bold;
+      letter-spacing: 0.03em;
+      text-align: center;
+      padding: 8px 0;
+      background: none;
+      border: none;
+      color: #777;
+      cursor: pointer;
+      transition: color 0.15s;
+      border-bottom: 2px solid transparent;
+    }
+    .palette-tab:active { color: #ccc; }
+    .palette-tab.active {
+      color: #ddd;
+      border-bottom-color: currentColor;
+    }
+
+    .palette::-webkit-scrollbar { display: none; }
+
+    /* Chain display → full width at top */
+    .chain-display {
+      left: 8px;
+      right: 8px;
+      top: 8px;
+      padding: 6px 10px;
+      gap: 6px;
+    }
+    .chain-label { font-size: 0.7rem; }
+    .chain-sequence { font-size: 0.75rem; }
+    .chain-count { font-size: 0.65rem; }
+    .chain-clear-btn { font-size: 0.65rem; padding: 2px 8px; }
+
+    /* Info panel hidden on mobile (toast used instead) */
+    .info-panel { display: none; }
+
+    /* Reset view button → bottom-left above palette */
+    .reset-view-btn {
+      top: auto;
+      right: auto;
+      bottom: 120px;
+      left: 8px;
+      width: 40px;
+      height: 40px;
+    }
+
+    /* Help button → bottom-right above palette */
+    .help-btn {
+      top: auto;
+      bottom: 120px;
+      right: 8px;
+      width: 40px;
+      height: 40px;
+    }
+
+    /* Lessons button → visible on mobile */
+    .lessons-btn {
+      display: flex;
+      position: absolute;
+      bottom: 120px;
+      right: 56px;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: rgba(18, 25, 38, 0.90);
+      border: 1px solid #2d3b4f;
+      font-size: 1.1rem;
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+      z-index: 20;
+    }
+    .lessons-btn:active {
+      background: rgba(88, 166, 255, 0.15);
+      border-color: #58a6ff;
+    }
+
+    .lessons-dropdown {
+      display: flex;
+      position: absolute;
+      bottom: 168px;
+      right: 8px;
+      width: 200px;
+      max-height: 50vh;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      background: rgba(18, 25, 38, 0.97);
+      border: 1px solid #2d3b4f;
+      border-radius: 6px;
+      padding: 10px;
+      z-index: 25;
+      pointer-events: auto;
+      flex-direction: column;
+      gap: 4px;
+      animation: fadeIn 0.15s ease-out;
+    }
+
+    .lesson-item {
+      border-radius: 4px;
+      padding: 8px 10px;
+    }
+
+    /* Action bar → visible on mobile */
+    .action-bar {
+      display: flex;
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      right: 8px;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 18;
+      pointer-events: auto;
+      animation: fadeIn 0.15s ease-out;
+    }
+
+    .action-btn {
+      display: flex;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 1px solid #2d3b4f;
+      background: rgba(18, 25, 38, 0.92);
+      color: #ddd;
+      font-family: 'Courier New', monospace;
+      font-size: 1.1rem;
+      cursor: pointer;
+      align-items: center;
+      justify-content: center;
+    }
+    .action-btn:active {
+      background: rgba(40, 50, 65, 0.9);
+    }
+    .action-btn.delete {
+      color: #ff6666;
+      border-color: #ff666644;
+    }
+    .action-btn.delete:active {
+      background: rgba(255, 102, 102, 0.15);
+    }
+
+    /* Help modal full-screen on mobile */
+    .help-modal {
+      width: 95vw;
+      max-height: 85vh;
+      padding: 16px;
+    }
+  }
 </style>
 </head>
 <body>
@@ -563,5 +888,10 @@
   <div id="ui-root"></div>
 
   <script type="module" src="js/game.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js');
+    }
+  </script>
 </body>
 </html>
