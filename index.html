@@ -6,6 +6,15 @@
 <title>PeptideLab</title>
 <link rel="icon" type="image/svg+xml" href="logo.svg">
 
+<!-- Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-8Q17ZW004Z"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-8Q17ZW004Z');
+</script>
+
 <!-- CDN Dependencies -->
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
@@ -211,6 +220,24 @@
     color: #666;
     white-space: nowrap;
     margin-left: auto;
+  }
+
+  .chain-clear-btn {
+    font-family: 'Courier New', monospace;
+    font-size: 0.7rem;
+    color: #ff6666;
+    background: none;
+    border: 1px solid #ff666644;
+    border-radius: 3px;
+    padding: 2px 10px;
+    cursor: pointer;
+    margin-left: 8px;
+    white-space: nowrap;
+    transition: all 0.2s;
+  }
+  .chain-clear-btn:hover {
+    background: rgba(255, 102, 102, 0.1);
+    border-color: #ff6666;
   }
 
   /* ========== Info Panel (bottom right) ========== */

@@ -139,6 +139,11 @@ function ChainDisplay() {
     React.createElement('span', { className: 'chain-label' }, 'Chain: '),
     React.createElement('span', { className: 'chain-sequence' }, sequence),
     React.createElement('span', { className: 'chain-count' }, `(${length} residues)`),
+    React.createElement('button', {
+      className: 'chain-clear-btn',
+      onClick: () => GameEvents.emit('clearScene'),
+      title: 'Clear all residues',
+    }, 'Clear'),
   );
 }
 

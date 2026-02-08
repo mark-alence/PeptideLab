@@ -6,7 +6,7 @@ import { startLoop } from './engine.js';
 import { GameEvents, App } from './ui.js';
 
 // 3D modules
-import { updateControls, render3D, resize3D, updateParticles } from './renderer3d.js';
+import { updateControls, render3D, resize3D, updateParticles, controls } from './renderer3d.js';
 import { createGrid } from './grid3d.js';
 import { updateStructures3D } from './structures3d.js';
 import { initInput, updateInput } from './input.js';
@@ -70,6 +70,10 @@ function postGameState() {
 }
 
 
+// Expose for automation (puppeteer capture)
+window.__gameEvents = GameEvents;
+window.__orbitControls = controls;
+
 // --- React mount ---
 const uiRoot = document.getElementById('ui-root');
 ReactDOM.createRoot(uiRoot).render(React.createElement(App));
@@ -85,6 +89,16 @@ GameEvents.on('gameStart', () => {
 GameEvents.on('chainChanged', () => {
   syncWaters(getChain());
   postGameState();
+});
+
+// --- Clear the scene ---
+GameEvents.on('clearScene', () => {
+  clearChain();
+  syncWaters(getChain());
+  GameEvents.emit('chainChanged', {
+    sequence: getSequence(),
+    length: getChainLength(),
+  });
 });
 
 // --- Load a preset scene ---
