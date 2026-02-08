@@ -28,10 +28,10 @@ function TitleScreen({ onStart }) {
     className: 'title-screen' + (fade ? ' fade-out' : ''),
   },
     React.createElement('h1', null, 'PeptideLab'),
-    React.createElement('p', { className: 'subtitle' }, 'Build your own protein chain'),
+    React.createElement('p', { className: 'subtitle' }, 'Drag & drop amino acids to build your own protein chain'),
     React.createElement('button', { onClick: handleStart, className: 'start-btn' }, 'Start Building'),
     React.createElement('p', { className: 'controls-hint' },
-      'Right-drag to orbit  |  Middle-drag to pan  |  Scroll to zoom  |  Ctrl+Z to undo'
+      'Right-drag to orbit  |  Scroll to zoom  |  Ctrl+Z to undo'
     ),
   );
 }
