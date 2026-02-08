@@ -2,10 +2,10 @@
 // ui.js — React UI: title screen, palette, chain display, info
 // ============================================================
 
-import { BIOMES, CAT, CAT_COLORS, CATEGORIES, BIOMES_BY_CATEGORY, BIOME_BY_LETTER } from './constants.js';
+import { BIOMES, CAT, CAT_COLORS, CATEGORIES, BIOMES_BY_CATEGORY, BIOME_BY_LETTER, STATION_ORDER } from './constants.js';
 import { SCENES } from './scenes.js';
 
-const { useState, useEffect, useCallback } = React;
+const { useState, useEffect, useCallback, useRef } = React;
 
 // --- Event Bus ---
 export const GameEvents = {
@@ -28,21 +28,21 @@ function TitleScreen({ onStart }) {
     className: 'title-screen' + (fade ? ' fade-out' : ''),
   },
     React.createElement('h1', null, 'PeptideLab'),
-    React.createElement('p', { className: 'subtitle' }, 'Drag & drop amino acids to build your own protein chain'),
+    React.createElement('p', { className: 'subtitle' }, 'Tap amino acids to build your own protein chain'),
     React.createElement('button', { onClick: handleStart, className: 'start-btn' }, 'Start Building'),
     React.createElement('p', { className: 'controls-hint' },
-      'Right-drag to orbit  |  Scroll to zoom  |  Ctrl+Z to undo'
+      'Tap to place  |  One-finger drag to orbit  |  Pinch to zoom'
     ),
   );
 }
 
-// --- Lessons (preset scenes) ---
-function Lessons() {
-  const [open, setOpen] = useState(true);
+// --- Lessons Button (top-right, opens dropdown) ---
+function LessonsButton() {
+  const [open, setOpen] = useState(false);
   const [activeId, setActiveId] = useState(null);
 
   useEffect(() => {
-    const onLoaded = (data) => setActiveId(data.scene.id);
+    const onLoaded = (data) => { setActiveId(data.scene.id); setOpen(false); };
     GameEvents.on('sceneLoaded', onLoaded);
     return () => GameEvents.off('sceneLoaded', onLoaded);
   }, []);
@@ -51,30 +51,51 @@ function Lessons() {
     GameEvents.emit('loadScene', { id });
   };
 
-  return React.createElement('div', { className: 'lessons-section' },
+  return React.createElement(React.Fragment, null,
     React.createElement('button', {
-      className: 'lessons-toggle',
-      onClick: () => setOpen(!open),
-    }, open ? 'Lessons \u25B4' : 'Lessons \u25BE'),
-    open && React.createElement('div', { className: 'lessons-list' },
+      className: 'lessons-btn',
+      onClick: () => setOpen(o => !o),
+      title: 'Lessons',
+    }, '\u{1F4D6}'),
+    open && React.createElement('div', {
+      className: 'lessons-dropdown',
+    },
+      React.createElement('div', { className: 'lessons-dropdown-title' }, 'Lessons'),
       ...SCENES.map(sc =>
         React.createElement('button', {
           key: sc.id,
           className: 'lesson-item' + (activeId === sc.id ? ' active' : ''),
           onClick: () => handleLoad(sc.id),
-          title: sc.description,
         }, sc.name)
       ),
     ),
   );
 }
 
-// --- Palette (left sidebar) ---
+// --- Category short labels for tabs ---
+const CAT_TAB_LABELS = {
+  [CAT.POSITIVE]:    '+Chg',
+  [CAT.NEGATIVE]:    '\u2013Chg',
+  [CAT.HYDROPHOBIC]: 'Hydro',
+  [CAT.AROMATIC]:    'Arom',
+  [CAT.POLAR]:       'Polar',
+  [CAT.SPECIAL]:     'Spec',
+};
+
+// --- Palette (fixed bottom bar with category tabs) ---
 function Palette() {
   const [selected, setSelected] = useState(null);
+  const [activeCat, setActiveCat] = useState(CATEGORIES[0].key);
 
   useEffect(() => {
-    const onSel = (data) => setSelected(data.letter);
+    const onSel = (data) => {
+      setSelected(data.letter);
+      // Switch to the category of the selected AA
+      if (data.letter) {
+        const biome = BIOME_BY_LETTER[data.letter];
+        if (biome) setActiveCat(biome.category);
+      }
+    };
     GameEvents.on('selectionChanged', onSel);
     return () => GameEvents.off('selectionChanged', onSel);
   }, []);
@@ -83,38 +104,35 @@ function Palette() {
     GameEvents.emit('selectAA', { letter });
   };
 
-  const handleMouseDown = (letter, e) => {
-    e.preventDefault();
-    GameEvents.emit('startDrag', { letter });
-  };
+  const items = BIOMES_BY_CATEGORY[activeCat] || [];
 
   return React.createElement('div', { className: 'palette' },
-    React.createElement(Lessons),
-    React.createElement('div', { className: 'palette-title' }, 'Amino Acids'),
-    ...CATEGORIES.map(cat =>
-      React.createElement('div', { key: cat.key, className: 'palette-group' },
-        React.createElement('div', {
-          className: 'palette-group-label',
-          style: { color: CAT_COLORS[cat.key] },
-        }, cat.label),
-        React.createElement('div', { className: 'palette-items' },
-          ...BIOMES_BY_CATEGORY[cat.key].map(biome =>
-            React.createElement('button', {
-              key: biome.letter,
-              className: 'palette-item' + (selected === biome.letter ? ' selected' : ''),
-              style: {
-                borderColor: selected === biome.letter ? CAT_COLORS[cat.key] : 'transparent',
-              },
-              onClick: () => handleClick(biome.letter),
-              onMouseDown: (e) => handleMouseDown(biome.letter, e),
-              title: `${biome.name} (${biome.code3})`,
-            },
-              React.createElement('span', { className: 'palette-letter' }, biome.letter),
-              React.createElement('span', { className: 'palette-name' }, biome.code3),
-            )
-          ),
-        ),
-      )
+    // AA buttons for active category
+    React.createElement('div', { className: 'palette-items' },
+      ...items.map(biome =>
+        React.createElement('button', {
+          key: biome.letter,
+          className: 'palette-item' + (selected === biome.letter ? ' selected' : ''),
+          style: {
+            borderColor: selected === biome.letter ? CAT_COLORS[activeCat] : 'transparent',
+          },
+          onClick: () => handleClick(biome.letter),
+        },
+          React.createElement('span', { className: 'palette-letter' }, biome.letter),
+          React.createElement('span', { className: 'palette-name' }, biome.code3),
+        )
+      ),
+    ),
+    // Category tabs
+    React.createElement('div', { className: 'palette-tabs' },
+      ...CATEGORIES.map(cat =>
+        React.createElement('button', {
+          key: cat.key,
+          className: 'palette-tab' + (activeCat === cat.key ? ' active' : ''),
+          style: activeCat === cat.key ? { color: CAT_COLORS[cat.key] } : {},
+          onClick: () => setActiveCat(cat.key),
+        }, CAT_TAB_LABELS[cat.key])
+      ),
     ),
   );
 }
@@ -147,66 +165,55 @@ function ChainDisplay() {
   );
 }
 
-// --- Info Panel (selected AA properties + scene description) ---
+// --- Info Panel (compact toast — only for placed AA focus + scene load) ---
 function InfoPanel() {
   const [letter, setLetter] = useState(null);
   const [sceneInfo, setSceneInfo] = useState(null);
 
   useEffect(() => {
-    const onSel = (data) => { setLetter(data.letter); setSceneInfo(null); };
-    const onFocus = (data) => { if (data.letter) { setLetter(data.letter); setSceneInfo(null); } };
+    // Don't show on palette selection — only on placed-AA focus and scene load
+    const onFocus = (data) => {
+      if (data.letter) { setLetter(data.letter); setSceneInfo(null); }
+      else { setLetter(null); }
+    };
     const onScene = (data) => { setSceneInfo(data.scene); setLetter(null); };
-    GameEvents.on('selectionChanged', onSel);
     GameEvents.on('focusEntry', onFocus);
     GameEvents.on('sceneLoaded', onScene);
     return () => {
-      GameEvents.off('selectionChanged', onSel);
       GameEvents.off('focusEntry', onFocus);
       GameEvents.off('sceneLoaded', onScene);
     };
   }, []);
 
-  // Scene description mode
+  const handleClose = () => {
+    setLetter(null);
+    setSceneInfo(null);
+  };
+
+  // Scene description
   if (sceneInfo) {
-    return React.createElement('div', { className: 'info-panel' },
-      React.createElement('div', { className: 'info-header' },
-        React.createElement('h2', null, sceneInfo.name),
+    return React.createElement('div', { className: 'info-toast' },
+      React.createElement('span', { className: 'info-toast-text' },
+        React.createElement('strong', null, sceneInfo.name),
+        ' \u2014 ',
+        sceneInfo.description,
       ),
-      React.createElement('p', { className: 'info-oneliner' }, sceneInfo.description),
-      React.createElement('div', { className: 'info-hint' }, 'Click an amino acid to see its properties'),
+      React.createElement('button', { className: 'info-toast-close', onClick: handleClose }, '\u00D7'),
     );
   }
 
-  // AA info mode
+  // AA info
   if (!letter) return null;
   const b = BIOME_BY_LETTER[letter];
   if (!b) return null;
 
-  return React.createElement('div', { className: 'info-panel' },
-    React.createElement('div', { className: 'info-header' },
-      React.createElement('h2', null, b.name),
-      React.createElement('span', { className: 'info-codes' }, `${b.code3} (${b.letter})`),
+  return React.createElement('div', { className: 'info-toast' },
+    React.createElement('span', { className: 'info-toast-text' },
+      React.createElement('strong', null, `${b.name} (${b.letter})`),
+      ' \u2014 ',
+      b.oneLiner,
     ),
-    React.createElement('p', { className: 'info-oneliner' }, b.oneLiner),
-    React.createElement('div', { className: 'info-props' },
-      React.createElement('div', null, `Charge: ${b.properties.charge}`),
-      React.createElement('div', null, `pI: ${b.properties.pI}`),
-      React.createElement('div', null, `MW: ${b.properties.mw}`),
-      React.createElement('div', null, `Hydropathy: ${b.properties.hydropathy}`),
-    ),
-    React.createElement('div', { className: 'info-codons' },
-      React.createElement('span', null, 'Codons: '),
-      b.codons.join(', '),
-    ),
-    React.createElement('div', { className: 'info-legend' },
-      React.createElement('span', null, 'Structure key: '),
-      ...[['C', '#555555'], ['N', '#5588ff'], ['O', '#ff4444'], ['S', '#ddcc22']].map(([el, col]) =>
-        React.createElement('span', { key: el, className: 'legend-atom' },
-          React.createElement('span', { className: 'legend-dot', style: { backgroundColor: col } }),
-          el,
-        )
-      ),
-    ),
+    React.createElement('button', { className: 'info-toast-close', onClick: handleClose }, '\u00D7'),
   );
 }
 
@@ -228,25 +235,21 @@ function HelpModal({ onClose }) {
     onClick: (e) => { if (e.target === e.currentTarget) onClose(); },
   },
     React.createElement('div', { className: 'help-modal' },
-      React.createElement('h2', null, 'Controls'),
+      React.createElement('h2', null, 'Touch Controls'),
       section('Camera', [
-        ['Right-drag', 'Orbit around scene'],
-        ['Middle-drag', 'Pan camera'],
-        ['Scroll wheel', 'Zoom in / out'],
+        ['One-finger drag', 'Orbit around scene'],
+        ['Two-finger drag', 'Pan camera'],
+        ['Pinch', 'Zoom in / out'],
       ]),
       section('Building', [
-        ['Click palette item', 'Select amino acid'],
-        ['Click on grid', 'Place selected amino acid'],
-        ['Drag from palette', 'Drag & drop onto grid'],
+        ['Tap palette item', 'Select amino acid'],
+        ['Tap on grid', 'Place selected amino acid'],
       ]),
       section('Editing', [
-        ['Click placed residue', 'Select it for editing'],
+        ['Tap placed residue', 'Select it (shows info + actions)'],
         ['Drag placed residue', 'Move it to a new cell'],
-        ['\u2190 \u2192 \u2191 \u2193', 'Rotate selected residue'],
-        ['R', 'Cycle side-chain rotamer'],
-        ['Backspace / X', 'Delete selected residue'],
-        ['Ctrl+Z / \u2318+Z', 'Undo (remove last placed)'],
-        ['Escape', 'Deselect / unfocus'],
+        ['Delete button', 'Remove selected residue'],
+        ['Undo button', 'Remove last placed residue'],
       ]),
       section('Other', [
         ['Lessons panel', 'Load preset peptide scenes'],
@@ -329,29 +332,108 @@ function HelpButton() {
     React.createElement('button', {
       className: 'help-btn',
       onClick: () => setOpen(true),
-      title: 'Controls (Shift+?)',
+      title: 'Controls',
     }, '?'),
     open && React.createElement(HelpModal, { onClose: () => setOpen(false) }),
+  );
+}
+
+// --- Reset View Button (appears after camera has been focused on an AA) ---
+function ResetViewButton() {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const onFocus = (data) => {
+      if (data.index != null) setVisible(true);
+    };
+    const onReset = () => setVisible(false);
+    GameEvents.on('focusEntry', onFocus);
+    GameEvents.on('cameraReset', onReset);
+    return () => {
+      GameEvents.off('focusEntry', onFocus);
+      GameEvents.off('cameraReset', onReset);
+    };
+  }, []);
+
+  if (!visible) return null;
+
+  return React.createElement('button', {
+    className: 'reset-view-btn',
+    onClick: () => GameEvents.emit('resetView'),
+  }, '\u2302');
+}
+
+// --- Action Bar (floating buttons for delete/undo/deselect) ---
+function ActionBar() {
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    const onFocus = (data) => {
+      setFocused(data.index !== null && data.index !== undefined);
+    };
+    GameEvents.on('focusEntry', onFocus);
+    return () => GameEvents.off('focusEntry', onFocus);
+  }, []);
+
+  if (!focused) return null;
+
+  return React.createElement('div', { className: 'action-bar' },
+    React.createElement('button', {
+      className: 'action-btn delete',
+      onClick: () => GameEvents.emit('deleteEntry'),
+      title: 'Delete selected',
+    }, '\u2715'),
+    React.createElement('button', {
+      className: 'action-btn',
+      onClick: () => GameEvents.emit('undoLast'),
+      title: 'Undo last',
+    }, '\u21A9'),
+    React.createElement('button', {
+      className: 'action-btn',
+      onClick: () => GameEvents.emit('deselect'),
+      title: 'Deselect',
+    }, '\u2190'),
   );
 }
 
 // --- App Root ---
 export function App() {
   const [started, setStarted] = useState(false);
+  const [faded, setFaded] = useState(false);
+  const uiRef = useRef(null);
 
   const handleStart = useCallback(() => {
     setStarted(true);
     GameEvents.emit('gameStart');
   }, []);
 
+  // Listen for camera gesture start/end to fade UI
+  useEffect(() => {
+    const onGestureStart = () => setFaded(true);
+    const onGestureEnd = () => setFaded(false);
+    GameEvents.on('cameraGestureStart', onGestureStart);
+    GameEvents.on('cameraGestureEnd', onGestureEnd);
+    return () => {
+      GameEvents.off('cameraGestureStart', onGestureStart);
+      GameEvents.off('cameraGestureEnd', onGestureEnd);
+    };
+  }, []);
+
   if (!started) {
     return React.createElement(TitleScreen, { onStart: handleStart });
   }
 
-  return React.createElement(React.Fragment, null,
+  return React.createElement('div', {
+    ref: uiRef,
+    className: faded ? 'ui-faded' : '',
+    style: { display: 'contents' },
+  },
     React.createElement(Palette),
     React.createElement(ChainDisplay),
     React.createElement(InfoPanel),
+    React.createElement(LessonsButton),
     React.createElement(HelpButton),
+    React.createElement(ResetViewButton),
+    React.createElement(ActionBar),
   );
 }

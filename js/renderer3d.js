@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { GRID_W, GRID_H } from './constants.js';
+import { GameEvents } from './ui.js';
 
 export const SCALE = 0.1; // 2D pixels → 3D units (kept for structures)
 
@@ -64,7 +65,47 @@ controls.mouseButtons = {
   MIDDLE: THREE.MOUSE.PAN,
   RIGHT: THREE.MOUSE.ROTATE,
 };
+// Touch: one-finger orbit, two-finger dolly+pan
+controls.touches = {
+  ONE: THREE.TOUCH.ROTATE,
+  TWO: THREE.TOUCH.DOLLY_PAN,
+};
 controls.update();
+
+// --- Camera gesture events (fade UI during orbit/pan/zoom) ---
+controls.addEventListener('start', () => GameEvents.emit('cameraGestureStart'));
+controls.addEventListener('end', () => GameEvents.emit('cameraGestureEnd'));
+
+// --- Camera focus: smoothly animate target to a world position ---
+const defaultTarget = new THREE.Vector3(cx, 0, cz);
+let cameraAnim = null; // { startTarget, endTarget, startTime, duration }
+
+export function focusCamera(worldX, worldZ) {
+  cameraAnim = {
+    startTarget: controls.target.clone(),
+    endTarget: new THREE.Vector3(worldX, 0, worldZ),
+    startTime: performance.now(),
+    duration: 400,
+  };
+}
+
+export function resetCamera() {
+  cameraAnim = {
+    startTarget: controls.target.clone(),
+    endTarget: defaultTarget.clone(),
+    startTime: performance.now(),
+    duration: 400,
+  };
+  GameEvents.emit('cameraReset');
+}
+
+export function updateCameraAnim() {
+  if (!cameraAnim) return;
+  const t = Math.min((performance.now() - cameraAnim.startTime) / cameraAnim.duration, 1);
+  const ease = t * (2 - t); // ease-out quad
+  controls.target.lerpVectors(cameraAnim.startTarget, cameraAnim.endTarget, ease);
+  if (t >= 1) cameraAnim = null;
+}
 
 // --- Lights ---
 const ambientLight = new THREE.AmbientLight(0xbccce8, 0.7);
@@ -97,10 +138,12 @@ export function render3D() {
 
 // --- Resize ---
 export function resize3D() {
-  camera3D.aspect = window.innerWidth / window.innerHeight;
+  const w = window.visualViewport?.width ?? window.innerWidth;
+  const h = window.visualViewport?.height ?? window.innerHeight;
+  camera3D.aspect = w / h;
   camera3D.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  cssRenderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(w, h);
+  cssRenderer.setSize(w, h);
 }
 
 // --- Expose renderer canvas for raycasting ---

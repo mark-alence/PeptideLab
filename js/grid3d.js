@@ -56,9 +56,15 @@ const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 let hoveredCell = null;
 
+export function updatePointerCoords(clientX, clientY) {
+  const w = window.visualViewport?.width ?? window.innerWidth;
+  const h = window.visualViewport?.height ?? window.innerHeight;
+  mouse.x = (clientX / w) * 2 - 1;
+  mouse.y = -(clientY / h) * 2 + 1;
+}
+
 function onMouseMove(e) {
-  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  updatePointerCoords(e.clientX, e.clientY);
 }
 
 export function updateHover() {
@@ -88,6 +94,11 @@ export function updateHover() {
 
 export function getHoveredCell() {
   return hoveredCell;
+}
+
+export function hideHighlight() {
+  highlight.visible = false;
+  ring.visible = false;
 }
 
 export function cellToWorld(col, row) {
