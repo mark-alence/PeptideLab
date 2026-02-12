@@ -7,12 +7,18 @@
 //   or_expr   = and_expr ("or" and_expr)*
 //   and_expr  = not_expr ("and" not_expr)*
 //   not_expr  = "not" not_expr | primary
-//   primary   = "(" expr ")" | "byres" primary | selector | named_sel
+//   primary   = "(" expr ")" | "byres" primary
+//             | "within" NUM "of" primary | "around" NUM "of" primary
+//             | "neighbor" primary | "bound_to" primary | selector | named_sel
 //   selector  = "chain" ids | "resi" ranges | "resn" ids | "name" ids
 //             | "elem" ids | "ss" types | "hetatm" | "polymer"
-//             | "backbone" | "sidechain" | "all" | "none"
+//             | "backbone" | "sidechain" | "organic" | "inorganic"
+//             | "solvent" | "water" | "hydrogens" | "h" | "metals"
+//             | "pepseq" WORD | "b" COMP NUM | "index" ranges | "id" ranges
+//             | "all" | "none"
 //   ids       = ID ("+" ID)*
 //   ranges    = INT ("-" INT)? ("+" INT ("-" INT)?)*
+//   COMP      = ">" | "<" | ">=" | "<=" | "="
 // ============================================================
 
 import { SS_HELIX, SS_SHEET } from './parser.js';
@@ -24,10 +30,20 @@ const T_LPAREN = '(';
 const T_RPAREN = ')';
 const T_PLUS   = '+';
 const T_DASH   = '-';
+const T_COMP   = 'COMP';  // >, <, >=, <=, =
 const T_EOF    = 'EOF';
 
 // Backbone atom names (standard protein backbone)
 const BACKBONE_NAMES = new Set(['N', 'CA', 'C', 'O', 'OXT', 'H', 'HA']);
+
+// Water residue names
+const WATER_NAMES = new Set(['HOH', 'WAT', 'H2O', 'DOD', 'TIP', 'TIP3', 'TIP4', 'SPC']);
+
+// Metal elements (common in PDB structures)
+const METAL_ELEMENTS = new Set([
+  'LI', 'BE', 'NA', 'MG', 'AL', 'K', 'CA', 'SC', 'TI', 'V', 'CR', 'MN',
+  'FE', 'CO', 'NI', 'CU', 'ZN', 'MO', 'AG', 'CD', 'W', 'AU', 'HG', 'PT', 'PB',
+]);
 
 // ---- Tokenizer ----
 function tokenize(input) {
@@ -40,11 +56,17 @@ function tokenize(input) {
     if (ch === ')') { tokens.push({ type: T_RPAREN, value: ')' }); i++; continue; }
     if (ch === '+') { tokens.push({ type: T_PLUS, value: '+' }); i++; continue; }
     if (ch === '-') { tokens.push({ type: T_DASH, value: '-' }); i++; continue; }
-    // Number
+    // Number (integer or decimal)
     if (ch >= '0' && ch <= '9') {
       let num = '';
       while (i < input.length && input[i] >= '0' && input[i] <= '9') { num += input[i]; i++; }
-      tokens.push({ type: T_NUMBER, value: parseInt(num) });
+      if (i < input.length && input[i] === '.') {
+        num += input[i]; i++;
+        while (i < input.length && input[i] >= '0' && input[i] <= '9') { num += input[i]; i++; }
+        tokens.push({ type: T_NUMBER, value: parseFloat(num) });
+      } else {
+        tokens.push({ type: T_NUMBER, value: parseInt(num) });
+      }
       continue;
     }
     // Word (alphanumeric + underscore + *)
@@ -54,6 +76,16 @@ function tokenize(input) {
       tokens.push({ type: T_WORD, value: word });
       continue;
     }
+    // Comparison operators
+    if (ch === '>' || ch === '<') {
+      if (i + 1 < input.length && input[i + 1] === '=') {
+        tokens.push({ type: T_COMP, value: ch + '=' }); i += 2;
+      } else {
+        tokens.push({ type: T_COMP, value: ch }); i++;
+      }
+      continue;
+    }
+    if (ch === '=') { tokens.push({ type: T_COMP, value: '=' }); i++; continue; }
     // Skip unknown characters
     i++;
   }
@@ -63,11 +95,13 @@ function tokenize(input) {
 
 // ---- Parser ----
 class Parser {
-  constructor(tokens, model, namedSelections) {
+  constructor(tokens, model, namedSelections, bonds) {
     this.tokens = tokens;
     this.pos = 0;
     this.model = model;
     this.named = namedSelections || new Map();
+    this.bonds = bonds || null;
+    this._adjacency = null;
   }
 
   peek() { return this.tokens[this.pos]; }
@@ -150,6 +184,22 @@ class Parser {
       return this.expandByResidue(inner);
     }
 
+    // within / around X of <sel>
+    if (t.type === T_WORD && (t.value.toLowerCase() === 'within' || t.value.toLowerCase() === 'around')) {
+      const kw = t.value.toLowerCase();
+      this.advance();
+      const distToken = this.expect(T_NUMBER);
+      const distance = distToken.value;
+      if (!this.matchWord('of')) throw new Error(`Expected "of" after "${kw} <distance>"`);
+      const targetSel = this.parsePrimary();
+      const result = this.selectWithin(distance, targetSel);
+      // "around" excludes the original selection; "within" includes it
+      if (kw === 'around') {
+        for (const idx of targetSel) result.delete(idx);
+      }
+      return result;
+    }
+
     // Selectors
     if (t.type === T_WORD) {
       const kw = t.value.toLowerCase();
@@ -166,6 +216,19 @@ class Parser {
         case 'bb':      this.advance(); return this.selectBackbone();
         case 'sidechain':
         case 'sc':      this.advance(); return this.selectSidechain();
+        case 'organic':   this.advance(); return this.selectOrganic();
+        case 'inorganic': this.advance(); return this.selectInorganic();
+        case 'solvent':
+        case 'water':     this.advance(); return this.selectSolvent();
+        case 'hydrogens':
+        case 'h':         this.advance(); return this.selectHydrogens();
+        case 'metals':    this.advance(); return this.selectMetals();
+        case 'pepseq':    this.advance(); return this.selectPepseq();
+        case 'b':         this.advance(); return this.selectBFactor();
+        case 'neighbor':
+        case 'bound_to':  this.advance(); return this.selectNeighbor(this.parsePrimary());
+        case 'index':     this.advance(); return this.selectIndex();
+        case 'id':        this.advance(); return this.selectId();
         case 'all':     this.advance(); return allAtoms(this.model.atomCount);
         case 'none':    this.advance(); return new Set();
         default: {
@@ -344,6 +407,206 @@ class Parser {
     return set;
   }
 
+  // ---- New PyMOL-parity selectors ----
+
+  selectOrganic() {
+    const set = new Set();
+    const { residues, atoms } = this.model;
+    for (const res of residues) {
+      if (res.isStandard || WATER_NAMES.has(res.name)) continue;
+      let hasCarbon = false;
+      for (let j = res.atomStart; j < res.atomEnd; j++) {
+        if (atoms[j].element === 'C') { hasCarbon = true; break; }
+      }
+      if (hasCarbon) {
+        for (let j = res.atomStart; j < res.atomEnd; j++) set.add(j);
+      }
+    }
+    return set;
+  }
+
+  selectInorganic() {
+    const set = new Set();
+    const { residues, atoms } = this.model;
+    for (const res of residues) {
+      if (res.isStandard || WATER_NAMES.has(res.name)) continue;
+      let hasCarbon = false;
+      for (let j = res.atomStart; j < res.atomEnd; j++) {
+        if (atoms[j].element === 'C') { hasCarbon = true; break; }
+      }
+      if (!hasCarbon) {
+        for (let j = res.atomStart; j < res.atomEnd; j++) set.add(j);
+      }
+    }
+    return set;
+  }
+
+  selectSolvent() {
+    const set = new Set();
+    const { residues } = this.model;
+    for (const res of residues) {
+      if (WATER_NAMES.has(res.name)) {
+        for (let j = res.atomStart; j < res.atomEnd; j++) set.add(j);
+      }
+    }
+    return set;
+  }
+
+  selectHydrogens() {
+    const set = new Set();
+    const { atoms } = this.model;
+    for (let i = 0; i < atoms.length; i++) {
+      if (atoms[i].element === 'H') set.add(i);
+    }
+    return set;
+  }
+
+  selectMetals() {
+    const set = new Set();
+    const { atoms } = this.model;
+    for (let i = 0; i < atoms.length; i++) {
+      if (METAL_ELEMENTS.has(atoms[i].element)) set.add(i);
+    }
+    return set;
+  }
+
+  selectPepseq() {
+    const t = this.peek();
+    if (t.type !== T_WORD) throw new Error('Expected sequence after "pepseq"');
+    const target = this.advance().value.toUpperCase();
+    const { residues, chains } = this.model;
+    const result = new Set();
+    for (const chain of chains) {
+      const chainRes = [];
+      for (let ri = chain.residueStart; ri < chain.residueEnd; ri++) {
+        if (residues[ri].isStandard) chainRes.push(ri);
+      }
+      const seq = chainRes.map(ri => residues[ri].oneLetterCode).join('');
+      let pos = 0;
+      while ((pos = seq.indexOf(target, pos)) !== -1) {
+        for (let k = pos; k < pos + target.length; k++) {
+          const res = residues[chainRes[k]];
+          for (let j = res.atomStart; j < res.atomEnd; j++) result.add(j);
+        }
+        pos++;
+      }
+    }
+    return result;
+  }
+
+  selectBFactor() {
+    const t = this.peek();
+    if (t.type !== T_COMP) throw new Error('Expected comparison (>, <, >=, <=, =) after "b"');
+    const op = this.advance().value;
+    let value;
+    if (this.peek().type === T_DASH) {
+      this.advance();
+      value = -this.expect(T_NUMBER).value;
+    } else {
+      value = this.expect(T_NUMBER).value;
+    }
+    const { bFactors, atomCount } = this.model;
+    const set = new Set();
+    for (let i = 0; i < atomCount; i++) {
+      const v = bFactors[i];
+      if ((op === '>' && v > value) || (op === '<' && v < value) ||
+          (op === '>=' && v >= value) || (op === '<=' && v <= value) ||
+          (op === '=' && v === value)) {
+        set.add(i);
+      }
+    }
+    return set;
+  }
+
+  _getAdjacency() {
+    if (this._adjacency) return this._adjacency;
+    if (!this.bonds) return null;
+    const adj = new Map();
+    for (let i = 0; i < this.bonds.length; i += 2) {
+      const a = this.bonds[i], b = this.bonds[i + 1];
+      if (!adj.has(a)) adj.set(a, []);
+      if (!adj.has(b)) adj.set(b, []);
+      adj.get(a).push(b);
+      adj.get(b).push(a);
+    }
+    this._adjacency = adj;
+    return adj;
+  }
+
+  selectNeighbor(innerSet) {
+    const adj = this._getAdjacency();
+    if (!adj) throw new Error('Bond data not available for neighbor selection');
+    const result = new Set();
+    for (const idx of innerSet) {
+      const neighbors = adj.get(idx);
+      if (neighbors) {
+        for (const n of neighbors) {
+          if (!innerSet.has(n)) result.add(n);
+        }
+      }
+    }
+    return result;
+  }
+
+  selectIndex() {
+    const ranges = this.parseRanges();
+    const set = new Set();
+    const { atomCount } = this.model;
+    for (const r of ranges) {
+      for (let i = Math.max(0, r.start); i <= r.end && i < atomCount; i++) {
+        set.add(i);
+      }
+    }
+    return set;
+  }
+
+  selectId() {
+    const ranges = this.parseRanges();
+    const set = new Set();
+    const { atoms } = this.model;
+    for (let i = 0; i < atoms.length; i++) {
+      const serial = atoms[i].serial;
+      for (const r of ranges) {
+        if (serial >= r.start && serial <= r.end) {
+          set.add(i);
+          break;
+        }
+      }
+    }
+    return set;
+  }
+
+  // Select all atoms within `distance` angstroms of any atom in targetSet
+  selectWithin(distance, targetSet) {
+    const { positions, atomCount } = this.model;
+    const distSq = distance * distance;
+    const result = new Set(targetSet); // target atoms are within distance 0 of themselves
+
+    // Flat array of target positions for fast iteration
+    const tp = new Float32Array(targetSet.size * 3);
+    let k = 0;
+    for (const idx of targetSet) {
+      tp[k++] = positions[idx * 3];
+      tp[k++] = positions[idx * 3 + 1];
+      tp[k++] = positions[idx * 3 + 2];
+    }
+
+    for (let i = 0; i < atomCount; i++) {
+      if (result.has(i)) continue;
+      const x = positions[i * 3];
+      const y = positions[i * 3 + 1];
+      const z = positions[i * 3 + 2];
+      for (let j = 0; j < tp.length; j += 3) {
+        const dx = x - tp[j], dy = y - tp[j + 1], dz = z - tp[j + 2];
+        if (dx * dx + dy * dy + dz * dz <= distSq) {
+          result.add(i);
+          break;
+        }
+      }
+    }
+    return result;
+  }
+
   // Expand selection to full residues
   expandByResidue(atomSet) {
     const { residues } = this.model;
@@ -398,14 +661,15 @@ function allAtoms(count) {
  * @param {string} str - Selection expression (e.g. "chain A and resi 1-10")
  * @param {Object} model - Parsed PDB model from parser.js
  * @param {Map<string, Set<number>>} [namedSelections] - Named selection store
+ * @param {Uint32Array} [bonds] - Bond pairs for neighbor/bound_to selections
  * @returns {Set<number>} Set of matching atom indices
  */
-export function parseSelection(str, model, namedSelections) {
+export function parseSelection(str, model, namedSelections, bonds) {
   const trimmed = str.trim();
   if (!trimmed) return new Set();
 
   const tokens = tokenize(trimmed);
-  const parser = new Parser(tokens, model, namedSelections);
+  const parser = new Parser(tokens, model, namedSelections, bonds);
   const result = parser.parseExpr();
 
   // Ensure we consumed everything (or just EOF remains)

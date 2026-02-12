@@ -824,7 +824,7 @@ export function App() {
   const [viewerError, setViewerError] = useState('');
   const [viewerQuality, setViewerQuality] = useState('low');
   const [consoleVisible, setConsoleVisible] = useState(false);
-  const interpreterRef = useRef(null);
+  const [interpreter, setInterpreter] = useState(null);
 
   const handleStart = useCallback(() => {
     setMode('builder');
@@ -857,7 +857,7 @@ export function App() {
   useEffect(() => {
     const onLoaded = (info) => setViewerInfo(info);
     const onError = (data) => setViewerError(data.message);
-    const onReady = (data) => { interpreterRef.current = data.interpreter; };
+    const onReady = (data) => { setInterpreter(data.interpreter); };
     GameEvents.on('viewerLoaded', onLoaded);
     GameEvents.on('viewerError', onError);
     GameEvents.on('viewerReady', onReady);
@@ -897,7 +897,7 @@ export function App() {
   // Reset console state when leaving viewer
   const handleBackToTitleWithConsole = useCallback(() => {
     setConsoleVisible(false);
-    interpreterRef.current = null;
+    setInterpreter(null);
     handleBackToTitle();
   }, [handleBackToTitle]);
 
@@ -919,11 +919,21 @@ export function App() {
       React.createElement(ViewerInfoBar, {
         info: viewerInfo,
         name: viewerName,
-        onBack: handleBackToTitle,
+        onBack: handleBackToTitleWithConsole,
         quality: viewerQuality,
         onQualityChange: handleQualityChange,
       }),
       React.createElement(ViewerError, { message: viewerError }),
+      React.createElement(PDBConsole, {
+        visible: consoleVisible,
+        interpreter: interpreter,
+        onToggle: toggleConsole,
+      }),
+      !consoleVisible && React.createElement('button', {
+        className: 'console-toggle-btn',
+        onClick: toggleConsole,
+        title: 'Toggle console (` key)',
+      }, '> Console'),
     );
   }
 

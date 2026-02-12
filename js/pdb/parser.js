@@ -67,6 +67,12 @@ export function parsePDB(pdbText) {
   const sheets = [];      // { startChain, startSeq, startICode, endChain, endSeq, endICode }
   const conectMap = {};   // serial → [serial, serial, ...]
 
+  // Header metadata — multi-line records get concatenated
+  const header = { classification: '', pdbId: '', date: '', title: '', compound: '', source: '', method: '', resolution: null };
+  const titleParts = [];
+  const compndParts = [];
+  const sourceParts = [];
+
   let inFirstModel = true;
   let seenModel = false;
 
@@ -74,6 +80,39 @@ export function parsePDB(pdbText) {
     const line = lines[i];
     if (line.length < 6) continue;
     const record = line.substring(0, 6);
+
+    // ---- Header metadata records ----
+    if (record === 'HEADER') {
+      header.classification = line.substring(10, 50).trim();
+      header.date = line.substring(50, 59).trim();
+      header.pdbId = line.substring(62, 66).trim();
+      continue;
+    }
+    if (record === 'TITLE ') {
+      titleParts.push(line.substring(10).trim());
+      continue;
+    }
+    if (record === 'COMPND') {
+      compndParts.push(line.substring(10).trim());
+      continue;
+    }
+    if (record === 'SOURCE') {
+      sourceParts.push(line.substring(10).trim());
+      continue;
+    }
+    if (record === 'EXPDTA') {
+      header.method = line.substring(10).trim();
+      continue;
+    }
+    if (record.startsWith('REMARK')) {
+      // REMARK 2 — resolution
+      const remarkNum = parseInt(line.substring(7, 10));
+      if (remarkNum === 2 && line.includes('RESOLUTION')) {
+        const match = line.match(/(\d+\.\d+)\s*ANGSTROM/);
+        if (match) header.resolution = parseFloat(match[1]);
+      }
+      continue;
+    }
 
     // MODEL/ENDMDL — only parse first model (NMR structures)
     if (record === 'MODEL ') {
@@ -276,6 +315,11 @@ export function parsePDB(pdbText) {
     }
   }
 
+  // Finalize header metadata
+  header.title = titleParts.join(' ');
+  header.compound = compndParts.join(' ');
+  header.source = sourceParts.join(' ');
+
   return {
     atoms,           // full atom objects (for name/resName lookups)
     positions,       // Float32Array [x0,y0,z0, x1,y1,z1, ...]
@@ -287,6 +331,7 @@ export function parsePDB(pdbText) {
     chains,          // [{id, residueStart, residueEnd}]
     conectBonds,     // [[atomIdx, atomIdx], ...]
     atomCount: n,
+    header,          // { classification, pdbId, date, title, compound, source, method, resolution }
   };
 }
 
