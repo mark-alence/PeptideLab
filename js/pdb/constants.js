@@ -50,4 +50,5 @@ export const REP_TYPES = {
   SPACEFILL:      'spacefill',
   STICK:          'sticks',
   CARTOON:        'cartoon',
+  LINES:          'lines',
 };

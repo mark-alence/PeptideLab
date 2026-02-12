@@ -820,6 +820,7 @@ const REP_BUTTONS = [
   { key: 'spacefill',      label: 'Spacefill' },
   { key: 'sticks',         label: 'Sticks' },
   { key: 'cartoon',        label: 'Cartoon' },
+  { key: 'lines',          label: 'Lines' },
 ];
 
 function RepToolbar({ currentRep, onRepChange, consoleVisible }) {

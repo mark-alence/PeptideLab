@@ -341,7 +341,7 @@ export async function translateToCommands(userText, apiKey, interpreter, onProgr
 
     // Detect if response is commands or informational text.
     // Commands start with a known keyword; plain text does not.
-    const CMD_KEYWORDS = /^(select|color|show|hide|represent|rep|zoom|center|orient|turn|reset|bg_color|count_atoms|delete|selections|ls|help|spectrum|set_color|util\.cbc|util\.chainbow|util\.ss)\b/i;
+    const CMD_KEYWORDS = /^(select|color|show|hide|represent|rep|zoom|center|orient|turn|reset|bg_color|count_atoms|delete|selections|ls|help|spectrum|set_color|util\.cbc|util\.chainbow|util\.ss|lines|as)\b/i;
     const isAllCommands = lines.length > 0 && lines.every(l => CMD_KEYWORDS.test(l));
 
     if (isAllCommands) {

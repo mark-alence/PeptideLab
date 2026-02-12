@@ -17,12 +17,14 @@ import { BallAndStickRepresentation } from './representations/BallAndStickRepres
 import { SpacefillRepresentation } from './representations/SpacefillRepresentation.js';
 import { StickRepresentation } from './representations/StickRepresentation.js';
 import { CartoonRepresentation } from './representations/CartoonRepresentation.js';
+import { LinesRepresentation } from './representations/LinesRepresentation.js';
 
 const REP_CLASSES = {
   [REP_TYPES.BALL_AND_STICK]: BallAndStickRepresentation,
   [REP_TYPES.SPACEFILL]:      SpacefillRepresentation,
   [REP_TYPES.STICK]:          StickRepresentation,
   [REP_TYPES.CARTOON]:        CartoonRepresentation,
+  [REP_TYPES.LINES]:          LinesRepresentation,
 };
 
 /**

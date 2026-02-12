@@ -24,6 +24,10 @@ const REP_ALIASES = {
   licorice:       REP_TYPES.STICK,
   cartoon:        REP_TYPES.CARTOON,
   ribbon:         REP_TYPES.CARTOON,
+  lines:          REP_TYPES.LINES,
+  line:           REP_TYPES.LINES,
+  wireframe:      REP_TYPES.LINES,
+  wire:           REP_TYPES.LINES,
 };
 
 // ---- Color interpolation for spectrum command ----
@@ -305,11 +309,17 @@ export function createCommandInterpreter(viewer) {
       return 'Switched to ball-and-stick representation';
     },
 
+    lines() {
+      viewer.setRepresentation(REP_TYPES.LINES);
+      if (_onRepChanged) _onRepChanged(REP_TYPES.LINES);
+      return 'Switched to lines (wireframe) representation';
+    },
+
     as(args) {
-      if (!args) return 'Usage: as <representation>\nAvailable: cartoon, sticks, spheres, ball_and_stick';
+      if (!args) return 'Usage: as <representation>\nAvailable: cartoon, sticks, spheres, ball_and_stick, lines';
       const repName = args.trim().toLowerCase();
       const repType = REP_ALIASES[repName];
-      if (!repType) return `Unknown representation: "${repName}". Available: cartoon, sticks, spheres, ball_and_stick`;
+      if (!repType) return `Unknown representation: "${repName}". Available: cartoon, sticks, spheres, ball_and_stick, lines`;
       viewer.setRepresentation(repType);
       if (_onRepChanged) _onRepChanged(repType);
       return `Switched to ${repName} representation`;
@@ -440,6 +450,7 @@ export function createCommandInterpreter(viewer) {
         '  sticks                Stick model',
         '  spheres               Spacefill (CPK)',
         '  ball_and_stick        Ball-and-stick (default)',
+        '  lines                 Wireframe (bonds only)',
         '',
         'Selection syntax:',
         '  chain A               Chain ID',
