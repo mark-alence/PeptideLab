@@ -4,6 +4,26 @@
 // ============================================================
 
 import { parseSelection, createSelectionStore } from './selection.js';
+import { REP_TYPES } from './constants.js';
+
+// Callback for notifying UI when representation changes from console
+let _onRepChanged = null;
+export function setRepChangedCallback(fn) { _onRepChanged = fn; }
+
+// Representation name aliases (command name -> REP_TYPES value)
+const REP_ALIASES = {
+  ball_and_stick: REP_TYPES.BALL_AND_STICK,
+  ballandstick:   REP_TYPES.BALL_AND_STICK,
+  bas:            REP_TYPES.BALL_AND_STICK,
+  spacefill:      REP_TYPES.SPACEFILL,
+  spheres:        REP_TYPES.SPACEFILL,
+  cpk:            REP_TYPES.SPACEFILL,
+  sticks:         REP_TYPES.STICK,
+  stick:          REP_TYPES.STICK,
+  licorice:       REP_TYPES.STICK,
+  cartoon:        REP_TYPES.CARTOON,
+  ribbon:         REP_TYPES.CARTOON,
+};
 
 // PyMOL color palette
 const COLOR_NAMES = {
@@ -206,6 +226,41 @@ export function createCommandInterpreter(viewer) {
       return `Selection "${name}" not found`;
     },
 
+    // Representation commands
+    cartoon() {
+      viewer.setRepresentation(REP_TYPES.CARTOON);
+      if (_onRepChanged) _onRepChanged(REP_TYPES.CARTOON);
+      return 'Switched to cartoon representation';
+    },
+
+    sticks() {
+      viewer.setRepresentation(REP_TYPES.STICK);
+      if (_onRepChanged) _onRepChanged(REP_TYPES.STICK);
+      return 'Switched to sticks representation';
+    },
+
+    spheres() {
+      viewer.setRepresentation(REP_TYPES.SPACEFILL);
+      if (_onRepChanged) _onRepChanged(REP_TYPES.SPACEFILL);
+      return 'Switched to spacefill representation';
+    },
+
+    ball_and_stick() {
+      viewer.setRepresentation(REP_TYPES.BALL_AND_STICK);
+      if (_onRepChanged) _onRepChanged(REP_TYPES.BALL_AND_STICK);
+      return 'Switched to ball-and-stick representation';
+    },
+
+    as(args) {
+      if (!args) return 'Usage: as <representation>\nAvailable: cartoon, sticks, spheres, ball_and_stick';
+      const repName = args.trim().toLowerCase();
+      const repType = REP_ALIASES[repName];
+      if (!repType) return `Unknown representation: "${repName}". Available: cartoon, sticks, spheres, ball_and_stick`;
+      viewer.setRepresentation(repType);
+      if (_onRepChanged) _onRepChanged(repType);
+      return `Switched to ${repName} representation`;
+    },
+
     help() {
       return [
         'Commands:',
@@ -220,6 +275,13 @@ export function createCommandInterpreter(viewer) {
         '  count_atoms <sel>     Count atoms in selection',
         '  selections / ls       List named selections',
         '  delete <name>         Delete named selection',
+        '',
+        'Representations:',
+        '  as <name>             Switch representation mode',
+        '  cartoon               Cartoon ribbon',
+        '  sticks                Stick model',
+        '  spheres               Spacefill (CPK)',
+        '  ball_and_stick        Ball-and-stick (default)',
         '',
         'Selection syntax:',
         '  chain A               Chain ID',

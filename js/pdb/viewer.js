@@ -1,6 +1,6 @@
 // ============================================================
 // viewer.js — PDB Viewer mode controller
-// Manages parsed protein model, InstancedMesh rendering,
+// Manages parsed protein model, representation rendering,
 // camera setup, cinematic lighting, post-processing, and
 // cleanup for mode switching.
 // ============================================================
@@ -8,10 +8,22 @@
 import * as THREE from 'three';
 import { parsePDB } from './parser.js';
 import { inferBonds } from './bondInference.js';
-import { createAtomInstances, createBondInstances, updateAtomColors, updateBondColors, ELEMENT_COLORS } from './atomRenderer.js';
+import { ELEMENT_COLORS, DEFAULT_COLOR, REP_TYPES } from './constants.js';
 import { createAtomMaterial, createBondMaterial } from './materials.js';
 import { createViewerLighting, removeViewerLighting, createEnvironmentMap, createRadialGradientBackground } from './lighting.js';
 import { PostProcessingPipeline } from './postProcessing.js';
+
+import { BallAndStickRepresentation } from './representations/BallAndStickRepresentation.js';
+import { SpacefillRepresentation } from './representations/SpacefillRepresentation.js';
+import { StickRepresentation } from './representations/StickRepresentation.js';
+import { CartoonRepresentation } from './representations/CartoonRepresentation.js';
+
+const REP_CLASSES = {
+  [REP_TYPES.BALL_AND_STICK]: BallAndStickRepresentation,
+  [REP_TYPES.SPACEFILL]:      SpacefillRepresentation,
+  [REP_TYPES.STICK]:          StickRepresentation,
+  [REP_TYPES.CARTOON]:        CartoonRepresentation,
+};
 
 /**
  * PDBViewer — controls the viewer mode lifecycle.
@@ -26,8 +38,13 @@ export class PDBViewer {
 
     this.model = null;
     this.bonds = null;
+    this.activeRep = null;
+    this.currentRepType = REP_TYPES.BALL_AND_STICK;
+
+    // Legacy refs for compatibility (some code may still check these)
     this.atomMesh = null;
     this.bondMesh = null;
+
     this.lights = [];
     this.viewerGroup = new THREE.Group();
     this.viewerGroup.name = 'pdb-viewer';
@@ -83,20 +100,67 @@ export class PDBViewer {
   }
 
   /**
-   * Build InstancedMeshes for the current model/bonds and add to scene.
+   * Build representation meshes for the current model.
    */
   _buildMeshes() {
-    const { model, bonds } = this;
+    const RepClass = REP_CLASSES[this.currentRepType];
+    if (!RepClass) return;
 
-    // Atoms
-    this.atomMesh = createAtomInstances(model, this.atomMaterial, 0.3);
-    this.viewerGroup.add(this.atomMesh);
+    this.activeRep = new RepClass(
+      this.model, this.bonds,
+      { atom: this.atomMaterial, bond: this.bondMaterial },
+      this.viewerGroup
+    );
+    this.activeRep.build();
 
-    // Bonds
-    this.bondMesh = createBondInstances(model, bonds, this.bondMaterial, 0.1);
-    if (this.bondMesh) {
-      this.viewerGroup.add(this.bondMesh);
+    // Update legacy refs
+    this.atomMesh = this.activeRep.getAtomMesh();
+    this.bondMesh = this.activeRep.getBondMesh();
+  }
+
+  /**
+   * Switch to a different representation type.
+   * Preserves color and visibility state.
+   *
+   * @param {string} type - One of REP_TYPES values
+   */
+  setRepresentation(type) {
+    if (!REP_CLASSES[type]) return;
+    if (!this.model) return;
+    if (type === this.currentRepType && this.activeRep) return;
+
+    // Dispose old representation
+    if (this.activeRep) {
+      this.activeRep.dispose();
+      this.activeRep = null;
     }
+
+    this.currentRepType = type;
+
+    // Build new representation
+    const RepClass = REP_CLASSES[type];
+    this.activeRep = new RepClass(
+      this.model, this.bonds,
+      { atom: this.atomMaterial, bond: this.bondMaterial },
+      this.viewerGroup
+    );
+    this.activeRep.build();
+
+    // Update legacy refs
+    this.atomMesh = this.activeRep.getAtomMesh();
+    this.bondMesh = this.activeRep.getBondMesh();
+
+    // Reapply color and visibility state
+    if (this.atomColors) {
+      this.activeRep.applyColors(this.atomColors);
+    }
+    if (this.atomVisible) {
+      this.activeRep.applyVisibility(this.atomVisible);
+    }
+
+    // Update base scales from the new representation
+    this.baseScales = this.activeRep.getBaseScales();
+    this.baseBondScales = this.activeRep.getBaseBondScales();
   }
 
   /**
@@ -184,7 +248,6 @@ export class PDBViewer {
   _initState() {
     const n = this.model.atomCount;
     const { atoms } = this.model;
-    const DEFAULT_COLOR = 0xFF69B4;
 
     // Store current element colors
     this.atomColors = new Array(n);
@@ -195,28 +258,9 @@ export class PDBViewer {
     // Visibility: 1 = visible, 0 = hidden
     this.atomVisible = new Uint8Array(n).fill(1);
 
-    // Extract base scales from atom instance matrices
-    this.baseScales = new Float32Array(n);
-    const _mat = new THREE.Matrix4();
-    const _pos = new THREE.Vector3();
-    const _quat = new THREE.Quaternion();
-    const _scl = new THREE.Vector3();
-    for (let i = 0; i < n; i++) {
-      this.atomMesh.getMatrixAt(i, _mat);
-      _mat.decompose(_pos, _quat, _scl);
-      this.baseScales[i] = _scl.x; // uniform scale
-    }
-
-    // Extract base scales from bond instance matrices
-    if (this.bondMesh) {
-      const bondInstCount = this.bondMesh.count;
-      this.baseBondScales = new Array(bondInstCount);
-      for (let i = 0; i < bondInstCount; i++) {
-        this.bondMesh.getMatrixAt(i, _mat);
-        _mat.decompose(_pos, _quat, _scl);
-        this.baseBondScales[i] = new THREE.Vector3().copy(_scl);
-      }
-    }
+    // Extract base scales from the active representation
+    this.baseScales = this.activeRep ? this.activeRep.getBaseScales() : null;
+    this.baseBondScales = this.activeRep ? this.activeRep.getBaseBondScales() : null;
 
     // Save initial camera state for reset
     this._initialCameraPos = this.camera.position.clone();
@@ -233,8 +277,7 @@ export class PDBViewer {
     for (const i of indices) {
       this.atomColors[i].copy(color);
     }
-    this._applyAtomColors();
-    this._updateBondColors();
+    if (this.activeRep) this.activeRep.applyColors(this.atomColors);
   }
 
   /**
@@ -242,26 +285,22 @@ export class PDBViewer {
    * @param {Set<number>|number[]} indices
    */
   resetColorsForAtoms(indices) {
-    const DEFAULT_COLOR = 0xFF69B4;
     const { atoms } = this.model;
     for (const i of indices) {
       this.atomColors[i].setHex(ELEMENT_COLORS[atoms[i].element] || DEFAULT_COLOR);
     }
-    this._applyAtomColors();
-    this._updateBondColors();
+    if (this.activeRep) this.activeRep.applyColors(this.atomColors);
   }
 
   /**
    * Reset all atom colors to element defaults.
    */
   resetColors() {
-    const DEFAULT_COLOR = 0xFF69B4;
     const { atoms } = this.model;
     for (let i = 0; i < atoms.length; i++) {
       this.atomColors[i].setHex(ELEMENT_COLORS[atoms[i].element] || DEFAULT_COLOR);
     }
-    this._applyAtomColors();
-    this._updateBondColors();
+    if (this.activeRep) this.activeRep.applyColors(this.atomColors);
   }
 
   /**
@@ -271,10 +310,8 @@ export class PDBViewer {
   hideAtoms(indices) {
     for (const i of indices) {
       this.atomVisible[i] = 0;
-      this._setAtomScale(i, 0);
     }
-    this.atomMesh.instanceMatrix.needsUpdate = true;
-    this._updateBondVisibility();
+    if (this.activeRep) this.activeRep.applyVisibility(this.atomVisible);
   }
 
   /**
@@ -284,10 +321,8 @@ export class PDBViewer {
   showAtoms(indices) {
     for (const i of indices) {
       this.atomVisible[i] = 1;
-      this._setAtomScale(i, this.baseScales[i]);
     }
-    this.atomMesh.instanceMatrix.needsUpdate = true;
-    this._updateBondVisibility();
+    if (this.activeRep) this.activeRep.applyVisibility(this.atomVisible);
   }
 
   /**
@@ -295,11 +330,7 @@ export class PDBViewer {
    */
   resetVisibility() {
     this.atomVisible.fill(1);
-    for (let i = 0; i < this.model.atomCount; i++) {
-      this._setAtomScale(i, this.baseScales[i]);
-    }
-    this.atomMesh.instanceMatrix.needsUpdate = true;
-    this._updateBondVisibility();
+    if (this.activeRep) this.activeRep.applyVisibility(this.atomVisible);
   }
 
   /**
@@ -379,92 +410,16 @@ export class PDBViewer {
     }
   }
 
-  // ---- Private helpers ----
-
-  /**
-   * Set instance scale for a single atom.
-   */
-  _setAtomScale(i, s) {
-    const _mat = new THREE.Matrix4();
-    const _pos = new THREE.Vector3();
-    const _quat = new THREE.Quaternion();
-    const _scl = new THREE.Vector3();
-    this.atomMesh.getMatrixAt(i, _mat);
-    _mat.decompose(_pos, _quat, _scl);
-    _scl.set(s, s, s);
-    _mat.compose(_pos, _quat, _scl);
-    this.atomMesh.setMatrixAt(i, _mat);
-  }
-
-  /**
-   * Apply atomColors array to the atom InstancedMesh.
-   */
-  _applyAtomColors() {
-    updateAtomColors(this.atomMesh, this.atomColors);
-  }
-
-  /**
-   * Update bond colors to match current atom colors.
-   */
-  _updateBondColors() {
-    if (!this.bondMesh || !this.bonds) return;
-    updateBondColors(this.bondMesh, this.bonds, this.atomColors);
-  }
-
-  /**
-   * Hide bonds where either atom is hidden (scale to zero).
-   */
-  _updateBondVisibility() {
-    if (!this.bondMesh || !this.bonds) return;
-    const bondCount = this.bonds.length / 2;
-    const _mat = new THREE.Matrix4();
-    const _pos = new THREE.Vector3();
-    const _quat = new THREE.Quaternion();
-    const _scl = new THREE.Vector3();
-
-    for (let bi = 0; bi < bondCount; bi++) {
-      const ai = this.bonds[bi * 2];
-      const aj = this.bonds[bi * 2 + 1];
-      const visible = this.atomVisible[ai] && this.atomVisible[aj];
-
-      for (let half = 0; half < 2; half++) {
-        const idx = bi * 2 + half;
-        if (visible) {
-          // Restore base scale
-          this.bondMesh.getMatrixAt(idx, _mat);
-          _mat.decompose(_pos, _quat, _scl);
-          _scl.copy(this.baseBondScales[idx]);
-          _mat.compose(_pos, _quat, _scl);
-          this.bondMesh.setMatrixAt(idx, _mat);
-        } else {
-          // Scale to zero
-          this.bondMesh.getMatrixAt(idx, _mat);
-          _mat.decompose(_pos, _quat, _scl);
-          _scl.set(0, 0, 0);
-          _mat.compose(_pos, _quat, _scl);
-          this.bondMesh.setMatrixAt(idx, _mat);
-        }
-      }
-    }
-    this.bondMesh.instanceMatrix.needsUpdate = true;
-  }
-
   /**
    * Remove current structure meshes from the scene.
    */
   clearStructure() {
-    if (this.atomMesh) {
-      this.viewerGroup.remove(this.atomMesh);
-      this.atomMesh.geometry.dispose();
-      this.atomMesh.dispose();
-      this.atomMesh = null;
+    if (this.activeRep) {
+      this.activeRep.dispose();
+      this.activeRep = null;
     }
-    if (this.bondMesh) {
-      this.viewerGroup.remove(this.bondMesh);
-      this.bondMesh.geometry.dispose();
-      this.bondMesh.dispose();
-      this.bondMesh = null;
-    }
+    this.atomMesh = null;
+    this.bondMesh = null;
     this.model = null;
     this.bonds = null;
     this.atomColors = null;

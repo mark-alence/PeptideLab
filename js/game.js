@@ -19,7 +19,7 @@ import { SCALE } from './renderer3d.js';
 
 // PDB Viewer
 import { PDBViewer } from './pdb/viewer.js';
-import { createCommandInterpreter } from './pdb/commands.js';
+import { createCommandInterpreter, setRepChangedCallback } from './pdb/commands.js';
 
 let pdbViewer = null;
 let viewerLoop = false;
@@ -171,6 +171,9 @@ GameEvents.on('enterViewerMode', (data) => {
 
     // Create command interpreter and notify UI
     cmdInterpreter = createCommandInterpreter(pdbViewer);
+    setRepChangedCallback((repType) => {
+      GameEvents.emit('viewerRepChanged', { rep: repType });
+    });
     GameEvents.emit('viewerReady', { interpreter: cmdInterpreter });
   } else {
     GameEvents.emit('viewerError', { message: 'Failed to parse PDB file' });
@@ -183,12 +186,19 @@ GameEvents.on('viewerQuality', (data) => {
   }
 });
 
+GameEvents.on('viewerRepChange', (data) => {
+  if (pdbViewer) {
+    pdbViewer.setRepresentation(data.rep);
+  }
+});
+
 GameEvents.on('exitViewerMode', () => {
   if (pdbViewer) {
     pdbViewer.dispose();
     pdbViewer = null;
   }
   cmdInterpreter = null;
+  setRepChangedCallback(null);
   viewerLoop = false;
   stopLoop();
   configureBuilderControls();

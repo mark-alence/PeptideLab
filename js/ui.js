@@ -814,6 +814,28 @@ function ViewerError({ message }) {
   return React.createElement('div', { className: 'viewer-error-toast' }, message);
 }
 
+// --- Representation Toolbar (viewer mode) ---
+const REP_BUTTONS = [
+  { key: 'ball_and_stick', label: 'Ball&Stick' },
+  { key: 'spacefill',      label: 'Spacefill' },
+  { key: 'sticks',         label: 'Sticks' },
+  { key: 'cartoon',        label: 'Cartoon' },
+];
+
+function RepToolbar({ currentRep, onRepChange, consoleVisible }) {
+  return React.createElement('div', {
+    className: 'rep-toolbar' + (consoleVisible ? ' console-open' : ''),
+  },
+    ...REP_BUTTONS.map(btn =>
+      React.createElement('button', {
+        key: btn.key,
+        className: 'rep-btn' + (currentRep === btn.key ? ' active' : ''),
+        onClick: () => onRepChange(btn.key),
+      }, btn.label)
+    ),
+  );
+}
+
 // --- App Root ---
 export function App() {
   // mode: 'title' | 'builder' | 'viewer'
@@ -824,6 +846,7 @@ export function App() {
   const [viewerError, setViewerError] = useState('');
   const [viewerQuality, setViewerQuality] = useState('low');
   const [consoleVisible, setConsoleVisible] = useState(false);
+  const [currentRep, setCurrentRep] = useState('ball_and_stick');
   const interpreterRef = useRef(null);
 
   const handleStart = useCallback(() => {
@@ -858,13 +881,16 @@ export function App() {
     const onLoaded = (info) => setViewerInfo(info);
     const onError = (data) => setViewerError(data.message);
     const onReady = (data) => { interpreterRef.current = data.interpreter; };
+    const onRepChanged = (data) => setCurrentRep(data.rep);
     GameEvents.on('viewerLoaded', onLoaded);
     GameEvents.on('viewerError', onError);
     GameEvents.on('viewerReady', onReady);
+    GameEvents.on('viewerRepChanged', onRepChanged);
     return () => {
       GameEvents.off('viewerLoaded', onLoaded);
       GameEvents.off('viewerError', onError);
       GameEvents.off('viewerReady', onReady);
+      GameEvents.off('viewerRepChanged', onRepChanged);
     };
   }, []);
 
@@ -897,12 +923,18 @@ export function App() {
   // Reset console state when leaving viewer
   const handleBackToTitleWithConsole = useCallback(() => {
     setConsoleVisible(false);
+    setCurrentRep('ball_and_stick');
     interpreterRef.current = null;
     handleBackToTitle();
   }, [handleBackToTitle]);
 
   const toggleConsole = useCallback(() => {
     setConsoleVisible(v => !v);
+  }, []);
+
+  const handleRepChange = useCallback((rep) => {
+    setCurrentRep(rep);
+    GameEvents.emit('viewerRepChange', { rep });
   }, []);
 
   // Title screen
@@ -919,11 +951,26 @@ export function App() {
       React.createElement(ViewerInfoBar, {
         info: viewerInfo,
         name: viewerName,
-        onBack: handleBackToTitle,
+        onBack: handleBackToTitleWithConsole,
         quality: viewerQuality,
         onQualityChange: handleQualityChange,
       }),
       React.createElement(ViewerError, { message: viewerError }),
+      React.createElement(RepToolbar, {
+        currentRep,
+        onRepChange: handleRepChange,
+        consoleVisible,
+      }),
+      React.createElement('button', {
+        className: 'console-toggle-btn' + (consoleVisible ? ' console-open' : ''),
+        onClick: toggleConsole,
+        title: 'Toggle console (`)',
+      }, consoleVisible ? 'Close Console' : 'Console `'),
+      React.createElement(PDBConsole, {
+        visible: consoleVisible,
+        interpreter: interpreterRef.current,
+        onToggle: toggleConsole,
+      }),
     );
   }
 

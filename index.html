@@ -975,6 +975,53 @@
     border-color: #33ff33;
     background: rgba(18, 25, 38, 0.95);
   }
+  .console-toggle-btn.console-open {
+    bottom: 232px;
+  }
+
+  /* ========== Representation Toolbar ========== */
+  .rep-toolbar {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 2px;
+    background: rgba(10, 14, 20, 0.85);
+    border: 1px solid #2d3b4f;
+    border-radius: 6px;
+    padding: 4px;
+    pointer-events: auto;
+    z-index: 20;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .rep-toolbar.console-open {
+    bottom: 236px;
+  }
+
+  .rep-btn {
+    font-family: 'Courier New', monospace;
+    font-size: 0.7rem;
+    color: #888;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    letter-spacing: 0.02em;
+  }
+  .rep-btn:hover {
+    color: #ccc;
+    background: rgba(88, 166, 255, 0.08);
+  }
+  .rep-btn.active {
+    color: #58a6ff;
+    border-color: #58a6ff;
+    background: rgba(88, 166, 255, 0.12);
+  }
 
   /* ========== UI Fade during camera gestures ========== */
   .ui-faded > * {
@@ -1220,6 +1267,21 @@
     .pdb-console { height: 180px; font-size: 0.7rem; }
     .pdb-console-input { font-size: 0.7rem; }
     .console-toggle-btn { bottom: 8px; right: 8px; }
+    .console-toggle-btn.console-open { bottom: 192px; }
+
+    /* Rep toolbar mobile */
+    .rep-toolbar {
+      bottom: 12px;
+      padding: 3px;
+      gap: 1px;
+    }
+    .rep-toolbar.console-open {
+      bottom: 196px;
+    }
+    .rep-btn {
+      font-size: 0.6rem;
+      padding: 4px 8px;
+    }
   }
 </style>
 </head>
