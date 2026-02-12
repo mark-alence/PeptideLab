@@ -847,7 +847,7 @@ export function App() {
   const [viewerQuality, setViewerQuality] = useState('low');
   const [consoleVisible, setConsoleVisible] = useState(false);
   const [currentRep, setCurrentRep] = useState('ball_and_stick');
-  const interpreterRef = useRef(null);
+  const [interpreter, setInterpreter] = useState(null);
 
   const handleStart = useCallback(() => {
     setMode('builder');
@@ -880,7 +880,7 @@ export function App() {
   useEffect(() => {
     const onLoaded = (info) => setViewerInfo(info);
     const onError = (data) => setViewerError(data.message);
-    const onReady = (data) => { interpreterRef.current = data.interpreter; };
+    const onReady = (data) => { setInterpreter(data.interpreter); };
     const onRepChanged = (data) => setCurrentRep(data.rep);
     GameEvents.on('viewerLoaded', onLoaded);
     GameEvents.on('viewerError', onError);
@@ -924,7 +924,7 @@ export function App() {
   const handleBackToTitleWithConsole = useCallback(() => {
     setConsoleVisible(false);
     setCurrentRep('ball_and_stick');
-    interpreterRef.current = null;
+    setInterpreter(null);
     handleBackToTitle();
   }, [handleBackToTitle]);
 
@@ -968,7 +968,7 @@ export function App() {
       }, consoleVisible ? 'Close Console' : 'Console `'),
       React.createElement(PDBConsole, {
         visible: consoleVisible,
-        interpreter: interpreterRef.current,
+        interpreter: interpreter,
         onToggle: toggleConsole,
       }),
     );

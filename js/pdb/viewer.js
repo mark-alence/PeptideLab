@@ -262,6 +262,10 @@ export class PDBViewer {
     this.baseScales = this.activeRep ? this.activeRep.getBaseScales() : null;
     this.baseBondScales = this.activeRep ? this.activeRep.getBaseBondScales() : null;
 
+    // Current representation mode and the radius scale used during mesh creation
+    this._radiusScale = 0.3; // matches createAtomInstances default
+    this._representation = 'sticks';
+
     // Save initial camera state for reset
     this._initialCameraPos = this.camera.position.clone();
     this._initialTarget = this.controls.target.clone();
@@ -319,6 +323,9 @@ export class PDBViewer {
    * @param {Set<number>|number[]} indices
    */
   showAtoms(indices) {
+    const atomMul = this._representation === 'spheres' ? (1.0 / this._radiusScale)
+                  : this._representation === 'lines'   ? 0.35
+                  : 1.0;
     for (const i of indices) {
       this.atomVisible[i] = 1;
     }
@@ -329,6 +336,9 @@ export class PDBViewer {
    * Reset all atoms to visible.
    */
   resetVisibility() {
+    const atomMul = this._representation === 'spheres' ? (1.0 / this._radiusScale)
+                  : this._representation === 'lines'   ? 0.35
+                  : 1.0;
     this.atomVisible.fill(1);
     if (this.activeRep) this.activeRep.applyVisibility(this.atomVisible);
   }
@@ -394,11 +404,147 @@ export class PDBViewer {
   }
 
   /**
+   * Switch atom/bond representation mode.
+   * @param {'spheres'|'sticks'|'lines'} mode
+   */
+  setRepresentation(mode) {
+    const n = this.model.atomCount;
+
+    // Atom scale multiplier relative to baseScales (which are VDW * 0.3)
+    // spheres: full VDW → multiply by 1/0.3 ≈ 3.33
+    // sticks:  ball-and-stick → 1.0 (default)
+    // lines:   tiny dots → 0.35
+    const atomMul = mode === 'spheres' ? (1.0 / this._radiusScale)
+                  : mode === 'lines'   ? 0.35
+                  : 1.0;
+
+    for (let i = 0; i < n; i++) {
+      if (this.atomVisible[i]) {
+        this._setAtomScale(i, this.baseScales[i] * atomMul);
+      }
+    }
+    this.atomMesh.instanceMatrix.needsUpdate = true;
+
+    // Bonds: hidden for spheres, thin for lines, normal for sticks
+    if (this.bondMesh && this.bonds) {
+      const bondCount = this.bonds.length / 2;
+      const _mat = new THREE.Matrix4();
+      const _scl = new THREE.Vector3();
+
+      for (let bi = 0; bi < bondCount; bi++) {
+        const ai = this.bonds[bi * 2];
+        const aj = this.bonds[bi * 2 + 1];
+        const atomsVisible = this.atomVisible[ai] && this.atomVisible[aj];
+
+        for (let half = 0; half < 2; half++) {
+          const idx = bi * 2 + half;
+
+          if (mode === 'spheres' || !atomsVisible) {
+            _scl.set(0, 0, 0);
+          } else if (mode === 'lines') {
+            const base = this.baseBondScales[idx];
+            _scl.set(base.x * 0.4, base.y, base.z * 0.4);
+          } else {
+            _scl.copy(this.baseBondScales[idx]);
+          }
+
+          // Recompose from stored base transform (avoids decompose on zero-scale)
+          _mat.compose(this.baseBondPositions[idx], this.baseBondQuats[idx], _scl);
+          this.bondMesh.setMatrixAt(idx, _mat);
+        }
+      }
+      this.bondMesh.instanceMatrix.needsUpdate = true;
+    }
+
+    this._representation = mode;
+  }
+
+  /**
+   * Get current representation mode.
+   * @returns {'spheres'|'sticks'|'lines'}
+   */
+  getRepresentation() {
+    return this._representation;
+  }
+
+  /**
+   * Color atoms using a per-atom hex color map.
+   * Used by spectrum, util.cbc, util.ss commands.
+   * @param {Map<number, number>} colorMap - atom index → hex color
+   */
+  colorAtomsByMap(colorMap) {
+    for (const [i, hex] of colorMap) {
+      this.atomColors[i].setHex(hex);
+    }
+    this._applyAtomColors();
+    this._updateBondColors();
+  }
+
+  /**
+   * Orient camera for best view of selection (look along shortest axis).
+   * @param {Set<number>|number[]} indices
+   */
+  orientToAtoms(indices) {
+    const { positions } = this.model;
+    let cx = 0, cy = 0, cz = 0, count = 0;
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+
+    for (const i of indices) {
+      const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
+      cx += x; cy += y; cz += z; count++;
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    }
+    if (count === 0) return;
+    cx /= count; cy /= count; cz /= count;
+
+    const extents = [
+      { x: 1, y: 0, z: 0, size: maxX - minX },
+      { x: 0, y: 1, z: 0, size: maxY - minY },
+      { x: 0, y: 0, z: 1, size: maxZ - minZ },
+    ];
+    extents.sort((a, b) => a.size - b.size);
+
+    // Camera looks along the shortest axis for the widest view
+    const v = extents[0];
+    const size = Math.max(extents[1].size, extents[2].size, 2);
+    const fov = this.camera.fov * (Math.PI / 180);
+    const dist = (size / 2) / Math.tan(fov / 2) * 1.8;
+
+    this.controls.target.set(cx, cy, cz);
+    this.camera.position.set(cx + v.x * dist, cy + v.y * dist, cz + v.z * dist);
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+  }
+
+  /**
+   * Rotate the camera around the orbit target by an angle along an axis.
+   * @param {'x'|'y'|'z'} axis
+   * @param {number} angleDeg - rotation in degrees
+   */
+  turnView(axis, angleDeg) {
+    const angleRad = angleDeg * Math.PI / 180;
+    const axisVec = new THREE.Vector3(
+      axis === 'x' ? 1 : 0,
+      axis === 'y' ? 1 : 0,
+      axis === 'z' ? 1 : 0
+    );
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    offset.applyAxisAngle(axisVec, angleRad);
+    this.camera.position.copy(this.controls.target).add(offset);
+    this.camera.lookAt(this.controls.target);
+    this.controls.update();
+  }
+
+  /**
    * Reset colors, visibility, camera, and background.
    */
   resetAll() {
     this.resetColors();
     this.resetVisibility();
+    this.setRepresentation('sticks');
     if (this._initialCameraPos) {
       this.camera.position.copy(this._initialCameraPos);
       this.controls.target.copy(this._initialTarget);
@@ -407,6 +553,51 @@ export class PDBViewer {
     }
     if (this.backgroundTexture) {
       this.scene.background = this.backgroundTexture;
+    }
+  }
+
+  // ---- Private helpers ----
+
+  /**
+   * Set instance scale for a single atom.
+   * Uses model.positions directly (atoms have identity quaternion)
+   * to avoid decompose failures on zero-scale matrices.
+   */
+  _setAtomScale(i, s) {
+    const _mat = new THREE.Matrix4();
+    const _pos = new THREE.Vector3();
+    const _quat = new THREE.Quaternion(); // identity
+    const _scl = new THREE.Vector3(s, s, s);
+    const p = this.model.positions;
+    _pos.set(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
+    _mat.compose(_pos, _quat, _scl);
+    this.atomMesh.setMatrixAt(i, _mat);
+  }
+
+  /**
+   * Apply atomColors array to the atom InstancedMesh.
+   */
+  _applyAtomColors() {
+    if (this.activeRep) {
+      this.activeRep.applyColors(this.atomColors);
+    }
+  }
+
+  /**
+   * Update bond colors to match current atom colors.
+   */
+  _updateBondColors() {
+    if (this.activeRep && this.activeRep.applyBondColors) {
+      this.activeRep.applyBondColors(this.atomColors, this.bonds);
+    }
+  }
+
+  /**
+   * Hide bonds where either atom is hidden (scale to zero).
+   */
+  _updateBondVisibility() {
+    if (this.activeRep) {
+      this.activeRep.applyVisibility(this.atomVisible);
     }
   }
 
@@ -426,6 +617,8 @@ export class PDBViewer {
     this.atomVisible = null;
     this.baseScales = null;
     this.baseBondScales = null;
+    this.baseBondPositions = null;
+    this.baseBondQuats = null;
   }
 
   /**
