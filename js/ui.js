@@ -18,12 +18,92 @@ export const GameEvents = {
 };
 
 // --- Title Screen ---
-function TitleScreen({ onStart }) {
+function TitleScreen({ onStart, onOpenViewer }) {
   const [fade, setFade] = useState(false);
+  const [pdbId, setPdbId] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef(null);
 
   const handleStart = () => {
     setFade(true);
     setTimeout(onStart, 600);
+  };
+
+  // Load PDB text into viewer mode
+  const loadPDB = (pdbText, name) => {
+    setFade(true);
+    setTimeout(() => onOpenViewer(pdbText, name), 600);
+  };
+
+  // Fetch from RCSB by ID
+  const handleFetchPDB = async () => {
+    const id = pdbId.trim().toUpperCase();
+    if (!id || id.length !== 4) {
+      setError('Enter a 4-character PDB ID (e.g. 1CRN)');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const url = `https://files.rcsb.org/download/${id}.pdb`;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`PDB ID "${id}" not found`);
+      const text = await resp.text();
+      loadPDB(text, id);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') handleFetchPDB();
+  };
+
+  // Load example (crambin)
+  const handleExample = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const resp = await fetch('https://files.rcsb.org/download/1CRN.pdb');
+      if (!resp.ok) throw new Error('Failed to fetch example');
+      const text = await resp.text();
+      loadPDB(text, '1CRN');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // File upload handling
+  const handleFile = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => loadPDB(reader.result, file.name);
+    reader.onerror = () => setError('Failed to read file');
+    reader.readAsText(file);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = () => setDragOver(false);
+
+  const handleFileInput = (e) => {
+    handleFile(e.target.files[0]);
   };
 
   const subtitle = isMobile
@@ -40,6 +120,65 @@ function TitleScreen({ onStart }) {
     React.createElement('h1', null, 'PeptideLab'),
     React.createElement('p', { className: 'subtitle' }, subtitle),
     React.createElement('button', { onClick: handleStart, className: 'start-btn' }, 'Start Building'),
+
+    // Divider
+    React.createElement('div', { className: 'title-divider' },
+      React.createElement('span', null, 'or'),
+    ),
+
+    // PDB Viewer section
+    React.createElement('div', { className: 'pdb-open-section' },
+      // Drop zone
+      React.createElement('div', {
+        className: 'pdb-drop-zone' + (dragOver ? ' drag-over' : ''),
+        onDrop: handleDrop,
+        onDragOver: handleDragOver,
+        onDragLeave: handleDragLeave,
+        onClick: () => fileInputRef.current?.click(),
+      },
+        React.createElement('span', { className: 'pdb-drop-icon' }, '\u{1F4C2}'),
+        React.createElement('span', { className: 'pdb-drop-text' },
+          dragOver ? 'Drop PDB file here' : 'Open PDB File'
+        ),
+        React.createElement('input', {
+          ref: fileInputRef,
+          type: 'file',
+          accept: '.pdb,.ent,.pdb1',
+          style: { display: 'none' },
+          onChange: handleFileInput,
+        }),
+      ),
+
+      // PDB ID input
+      React.createElement('div', { className: 'pdb-fetch-row' },
+        React.createElement('input', {
+          type: 'text',
+          className: 'pdb-id-input',
+          placeholder: 'PDB ID (e.g. 1CRN)',
+          value: pdbId,
+          maxLength: 4,
+          onChange: (e) => setPdbId(e.target.value.toUpperCase()),
+          onKeyDown: handleKeyDown,
+          disabled: loading,
+        }),
+        React.createElement('button', {
+          className: 'pdb-fetch-btn',
+          onClick: handleFetchPDB,
+          disabled: loading,
+        }, loading ? 'Loading...' : 'Fetch'),
+      ),
+
+      // Example button
+      React.createElement('button', {
+        className: 'pdb-example-btn',
+        onClick: handleExample,
+        disabled: loading,
+      }, 'Load Example (Crambin)'),
+
+      // Error display
+      error && React.createElement('p', { className: 'pdb-error' }, error),
+    ),
+
     React.createElement('p', { className: 'controls-hint' }, hints),
   );
 }
@@ -636,14 +775,72 @@ function HelpButton() {
   );
 }
 
+// ============================================================
+// Viewer Mode Components
+// ============================================================
+
+// --- Viewer Info Bar (top bar showing protein stats) ---
+function ViewerInfoBar({ info, name, onBack }) {
+  if (!info) return null;
+  return React.createElement('div', { className: 'viewer-info-bar' },
+    React.createElement('button', {
+      className: 'viewer-back-btn',
+      onClick: onBack,
+      title: 'Back to title',
+    }, '\u2190'),
+    React.createElement('span', { className: 'viewer-name' }, name || 'PDB Viewer'),
+    React.createElement('span', { className: 'viewer-stats' },
+      `${info.atomCount.toLocaleString()} atoms \u00B7 ${info.residueCount} residues \u00B7 ${info.chainCount} chain${info.chainCount !== 1 ? 's' : ''}`
+    ),
+  );
+}
+
+// --- Viewer Error Toast ---
+function ViewerError({ message }) {
+  if (!message) return null;
+  return React.createElement('div', { className: 'viewer-error-toast' }, message);
+}
+
 // --- App Root ---
 export function App() {
-  const [started, setStarted] = useState(false);
+  // mode: 'title' | 'builder' | 'viewer'
+  const [mode, setMode] = useState('title');
   const [faded, setFaded] = useState(false);
+  const [viewerInfo, setViewerInfo] = useState(null);
+  const [viewerName, setViewerName] = useState('');
+  const [viewerError, setViewerError] = useState('');
 
   const handleStart = useCallback(() => {
-    setStarted(true);
+    setMode('builder');
     GameEvents.emit('gameStart');
+  }, []);
+
+  const handleOpenViewer = useCallback((pdbText, name) => {
+    setMode('viewer');
+    setViewerName(name || 'Structure');
+    setViewerError('');
+    setViewerInfo(null);
+    GameEvents.emit('enterViewerMode', { pdbText });
+  }, []);
+
+  const handleBackToTitle = useCallback(() => {
+    GameEvents.emit('exitViewerMode');
+    setMode('title');
+    setViewerInfo(null);
+    setViewerName('');
+    setViewerError('');
+  }, []);
+
+  // Listen for viewer events
+  useEffect(() => {
+    const onLoaded = (info) => setViewerInfo(info);
+    const onError = (data) => setViewerError(data.message);
+    GameEvents.on('viewerLoaded', onLoaded);
+    GameEvents.on('viewerError', onError);
+    return () => {
+      GameEvents.off('viewerLoaded', onLoaded);
+      GameEvents.off('viewerError', onError);
+    };
   }, []);
 
   // Fade UI during camera gestures (mobile)
@@ -659,10 +856,27 @@ export function App() {
     };
   }, []);
 
-  if (!started) {
-    return React.createElement(TitleScreen, { onStart: handleStart });
+  // Title screen
+  if (mode === 'title') {
+    return React.createElement(TitleScreen, {
+      onStart: handleStart,
+      onOpenViewer: handleOpenViewer,
+    });
   }
 
+  // Viewer mode
+  if (mode === 'viewer') {
+    return React.createElement(React.Fragment, null,
+      React.createElement(ViewerInfoBar, {
+        info: viewerInfo,
+        name: viewerName,
+        onBack: handleBackToTitle,
+      }),
+      React.createElement(ViewerError, { message: viewerError }),
+    );
+  }
+
+  // Builder mode
   if (isMobile) {
     return React.createElement('div', {
       className: faded ? 'ui-faded' : '',

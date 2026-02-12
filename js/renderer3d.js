@@ -150,3 +150,71 @@ export function resize3D() {
 export function getCanvas() {
   return renderer.domElement;
 }
+
+// --- Viewer mode: reconfigure controls for free orbit ---
+export function configureViewerControls() {
+  // Left-click orbits (no grid placement), middle pans, right also orbits
+  controls.mouseButtons = {
+    LEFT: THREE.MOUSE.ROTATE,
+    MIDDLE: THREE.MOUSE.PAN,
+    RIGHT: THREE.MOUSE.ROTATE,
+  };
+  controls.touches = {
+    ONE: THREE.TOUCH.ROTATE,
+    TWO: THREE.TOUCH.DOLLY_PAN,
+  };
+  // Remove polar angle limit — allow full rotation
+  controls.maxPolarAngle = Math.PI;
+  // Remove distance limits (viewer.js sets its own)
+  controls.minDistance = 0;
+  controls.maxDistance = Infinity;
+  controls.update();
+}
+
+// --- Restore builder mode controls ---
+export function configureBuilderControls() {
+  const cx = GRID_W / 2;
+  const cz = GRID_H / 2;
+  controls.mouseButtons = {
+    LEFT: null,
+    MIDDLE: THREE.MOUSE.PAN,
+    RIGHT: THREE.MOUSE.ROTATE,
+  };
+  controls.touches = {
+    ONE: THREE.TOUCH.ROTATE,
+    TWO: THREE.TOUCH.DOLLY_PAN,
+  };
+  controls.maxPolarAngle = Math.PI / 2 - 0.05;
+  controls.minDistance = 10;
+  controls.maxDistance = 80;
+  controls.target.set(cx, 0, cz);
+  camera3D.position.set(cx, 25, cz + 30);
+  camera3D.near = 0.1;
+  camera3D.far = 500;
+  camera3D.updateProjectionMatrix();
+  controls.update();
+}
+
+// --- Scene background / fog / lighting control for viewer mode ---
+export function setViewerBackground() {
+  scene.background = new THREE.Color(0x1a2030);
+  scene.fog = null;
+  // Hide builder lights — viewer adds its own
+  ambientLight.visible = false;
+  hemiLight.visible = false;
+  dirLight.visible = false;
+  // Disable ACES tone mapping for viewer — it crushes molecular colors
+  renderer.toneMapping = THREE.LinearToneMapping;
+  renderer.toneMappingExposure = 1.0;
+}
+
+export function setBuilderBackground() {
+  scene.background = new THREE.Color(0x1e2a3d);
+  scene.fog = new THREE.FogExp2(0x1e2a3d, 0.003);
+  // Restore builder lights
+  ambientLight.visible = true;
+  hemiLight.visible = true;
+  dirLight.visible = true;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.7;
+}

@@ -1,12 +1,12 @@
 // ============================================================
-// game.js — Sandbox protein builder entry point
+// game.js — Sandbox protein builder + PDB viewer entry point
 // ============================================================
 
-import { startLoop } from './engine.js';
+import { startLoop, stopLoop } from './engine.js';
 import { GameEvents, App } from './ui.js';
 
 // 3D modules
-import { updateControls, render3D, resize3D, updateParticles, controls, focusCamera, resetCamera, updateCameraAnim } from './renderer3d.js';
+import { updateControls, render3D, resize3D, updateParticles, controls, focusCamera, resetCamera, updateCameraAnim, scene, camera3D, configureViewerControls, configureBuilderControls, setViewerBackground, setBuilderBackground } from './renderer3d.js';
 import { createGrid } from './grid3d.js';
 import { updateStructures3D } from './structures3d.js';
 import { initInput, updateInput } from './input.js';
@@ -16,6 +16,12 @@ import { SCENES } from './scenes.js';
 import { cellToWorld } from './grid3d.js';
 import { FULL, STRUCT_SCALE } from './structures.js';
 import { SCALE } from './renderer3d.js';
+
+// PDB Viewer
+import { PDBViewer } from './pdb/viewer.js';
+
+let pdbViewer = null;
+let viewerLoop = false;
 
 // --- Dev: post game state to server ---
 function postGameState() {
@@ -136,6 +142,55 @@ GameEvents.on('loadScene', (data) => {
   });
   GameEvents.emit('sceneLoaded', { scene });
 });
+
+// ============================================================
+// PDB Viewer Mode
+// ============================================================
+
+GameEvents.on('enterViewerMode', (data) => {
+  // Set up viewer scene
+  configureViewerControls();
+  setViewerBackground();
+
+  pdbViewer = new PDBViewer(scene, camera3D, controls);
+
+  // Start the viewer render loop
+  viewerLoop = true;
+  startLoop(viewerUpdate, viewerRender);
+
+  // Load the PDB data
+  const result = pdbViewer.loadFromText(data.pdbText);
+  if (result) {
+    const info = pdbViewer.getInfo();
+    GameEvents.emit('viewerLoaded', info);
+  } else {
+    GameEvents.emit('viewerError', { message: 'Failed to parse PDB file' });
+  }
+});
+
+GameEvents.on('exitViewerMode', () => {
+  if (pdbViewer) {
+    pdbViewer.dispose();
+    pdbViewer = null;
+  }
+  viewerLoop = false;
+  stopLoop();
+  configureBuilderControls();
+  setBuilderBackground();
+});
+
+function viewerUpdate(dt) {
+  // Viewer has no fixed-timestep updates currently
+}
+
+function viewerRender(alpha) {
+  updateControls();
+  render3D();
+}
+
+// ============================================================
+// Builder Mode
+// ============================================================
 
 // --- Update (fixed timestep) ---
 function update(dt) {

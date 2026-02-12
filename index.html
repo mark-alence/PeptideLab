@@ -138,6 +138,188 @@
     text-align: center;
   }
 
+  /* ========== Title Screen: PDB Open Section ========== */
+  .title-divider {
+    display: flex;
+    align-items: center;
+    width: 280px;
+    margin: 1.2rem 0;
+    color: #444;
+    font-size: 0.85rem;
+  }
+  .title-divider::before,
+  .title-divider::after {
+    content: '';
+    flex: 1;
+    border-bottom: 1px solid #2d3b4f;
+  }
+  .title-divider span {
+    padding: 0 12px;
+  }
+
+  .pdb-open-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    width: 280px;
+  }
+
+  .pdb-drop-zone {
+    width: 100%;
+    padding: 16px;
+    border: 2px dashed #2d3b4f;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .pdb-drop-zone:hover,
+  .pdb-drop-zone.drag-over {
+    border-color: #58a6ff;
+    background: rgba(88, 166, 255, 0.05);
+  }
+  .pdb-drop-icon { font-size: 1.4rem; }
+  .pdb-drop-text {
+    font-size: 0.9rem;
+    color: #888;
+    font-family: 'Courier New', monospace;
+  }
+
+  .pdb-fetch-row {
+    display: flex;
+    gap: 6px;
+    width: 100%;
+  }
+  .pdb-id-input {
+    flex: 1;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
+    padding: 6px 10px;
+    background: rgba(18, 25, 38, 0.8);
+    border: 1px solid #2d3b4f;
+    border-radius: 4px;
+    color: #ddd;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .pdb-id-input::placeholder {
+    color: #555;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  .pdb-id-input:focus {
+    outline: none;
+    border-color: #58a6ff;
+  }
+  .pdb-fetch-btn {
+    font-family: 'Courier New', monospace;
+    font-size: 0.85rem;
+    padding: 6px 14px;
+    background: none;
+    border: 1px solid #58a6ff;
+    color: #58a6ff;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .pdb-fetch-btn:hover:not(:disabled) {
+    background: #58a6ff22;
+  }
+  .pdb-fetch-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .pdb-example-btn {
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    color: #666;
+    background: none;
+    border: 1px solid #2d3b4f;
+    border-radius: 4px;
+    padding: 5px 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .pdb-example-btn:hover:not(:disabled) {
+    color: #aaa;
+    border-color: #444;
+  }
+  .pdb-example-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .pdb-error {
+    color: #ff6666;
+    font-size: 0.8rem;
+    text-align: center;
+  }
+
+  /* ========== Viewer Mode UI ========== */
+  .viewer-info-bar {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    background: rgba(18, 25, 38, 0.90);
+    border: 1px solid #2d3b4f;
+    border-radius: 4px;
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    pointer-events: auto;
+    z-index: 20;
+  }
+
+  .viewer-back-btn {
+    font-family: 'Courier New', monospace;
+    font-size: 1rem;
+    color: #58a6ff;
+    background: none;
+    border: 1px solid #2d3b4f;
+    border-radius: 4px;
+    padding: 2px 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .viewer-back-btn:hover {
+    background: rgba(88, 166, 255, 0.1);
+    border-color: #58a6ff;
+  }
+
+  .viewer-name {
+    font-size: 0.95rem;
+    color: #58a6ff;
+    font-weight: bold;
+    letter-spacing: 0.08em;
+  }
+
+  .viewer-stats {
+    font-size: 0.8rem;
+    color: #888;
+    margin-left: auto;
+  }
+
+  .viewer-error-toast {
+    position: absolute;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(255, 60, 60, 0.9);
+    color: #fff;
+    padding: 8px 20px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    z-index: 30;
+    pointer-events: auto;
+  }
+
   /* ========== Palette (desktop: left sidebar) ========== */
   .palette {
     position: absolute;
@@ -890,6 +1072,22 @@
       max-height: 85vh;
       padding: 16px;
     }
+
+    /* PDB section mobile tweaks */
+    .pdb-open-section { width: 260px; }
+    .pdb-drop-zone { padding: 12px; }
+    .title-divider { width: 260px; }
+
+    /* Viewer info bar mobile */
+    .viewer-info-bar {
+      top: 8px;
+      left: 8px;
+      right: 8px;
+      padding: 6px 10px;
+      gap: 8px;
+    }
+    .viewer-name { font-size: 0.85rem; }
+    .viewer-stats { font-size: 0.7rem; }
   }
 </style>
 </head>
