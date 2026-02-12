@@ -4,6 +4,7 @@
 
 import { BIOMES, CAT, CAT_COLORS, CATEGORIES, BIOMES_BY_CATEGORY, BIOME_BY_LETTER } from './constants.js';
 import { SCENES } from './scenes.js';
+import { PDBConsole } from './pdb/console.js';
 
 const { useState, useEffect, useCallback, useRef } = React;
 
@@ -779,9 +780,10 @@ function HelpButton() {
 // Viewer Mode Components
 // ============================================================
 
-// --- Viewer Info Bar (top bar showing protein stats) ---
-function ViewerInfoBar({ info, name, onBack }) {
+// --- Viewer Info Bar (top bar showing protein stats + quality toggle) ---
+function ViewerInfoBar({ info, name, onBack, quality, onQualityChange }) {
   if (!info) return null;
+  const qualityLevels = ['off', 'low', 'high'];
   return React.createElement('div', { className: 'viewer-info-bar' },
     React.createElement('button', {
       className: 'viewer-back-btn',
@@ -791,6 +793,17 @@ function ViewerInfoBar({ info, name, onBack }) {
     React.createElement('span', { className: 'viewer-name' }, name || 'PDB Viewer'),
     React.createElement('span', { className: 'viewer-stats' },
       `${info.atomCount.toLocaleString()} atoms \u00B7 ${info.residueCount} residues \u00B7 ${info.chainCount} chain${info.chainCount !== 1 ? 's' : ''}`
+    ),
+    React.createElement('div', { className: 'viewer-quality-toggle' },
+      React.createElement('span', { className: 'viewer-quality-label' }, 'FX'),
+      ...qualityLevels.map(q =>
+        React.createElement('button', {
+          key: q,
+          className: 'viewer-quality-btn' + (quality === q ? ' active' : ''),
+          onClick: () => onQualityChange(q),
+          title: q === 'off' ? 'No post-processing' : q === 'low' ? 'SSAO + Bloom (balanced)' : 'SSAO + Bloom (full quality)',
+        }, q.charAt(0).toUpperCase() + q.slice(1))
+      ),
     ),
   );
 }
@@ -809,6 +822,9 @@ export function App() {
   const [viewerInfo, setViewerInfo] = useState(null);
   const [viewerName, setViewerName] = useState('');
   const [viewerError, setViewerError] = useState('');
+  const [viewerQuality, setViewerQuality] = useState('low');
+  const [consoleVisible, setConsoleVisible] = useState(false);
+  const interpreterRef = useRef(null);
 
   const handleStart = useCallback(() => {
     setMode('builder');
@@ -820,8 +836,8 @@ export function App() {
     setViewerName(name || 'Structure');
     setViewerError('');
     setViewerInfo(null);
-    GameEvents.emit('enterViewerMode', { pdbText });
-  }, []);
+    GameEvents.emit('enterViewerMode', { pdbText, quality: viewerQuality });
+  }, [viewerQuality]);
 
   const handleBackToTitle = useCallback(() => {
     GameEvents.emit('exitViewerMode');
@@ -829,17 +845,26 @@ export function App() {
     setViewerInfo(null);
     setViewerName('');
     setViewerError('');
+    setViewerQuality('low');
+  }, []);
+
+  const handleQualityChange = useCallback((q) => {
+    setViewerQuality(q);
+    GameEvents.emit('viewerQuality', { quality: q });
   }, []);
 
   // Listen for viewer events
   useEffect(() => {
     const onLoaded = (info) => setViewerInfo(info);
     const onError = (data) => setViewerError(data.message);
+    const onReady = (data) => { interpreterRef.current = data.interpreter; };
     GameEvents.on('viewerLoaded', onLoaded);
     GameEvents.on('viewerError', onError);
+    GameEvents.on('viewerReady', onReady);
     return () => {
       GameEvents.off('viewerLoaded', onLoaded);
       GameEvents.off('viewerError', onError);
+      GameEvents.off('viewerReady', onReady);
     };
   }, []);
 
@@ -854,6 +879,30 @@ export function App() {
       GameEvents.off('cameraGestureStart', onGestureStart);
       GameEvents.off('cameraGestureEnd', onGestureEnd);
     };
+  }, []);
+
+  // Backtick key toggles console in viewer mode
+  useEffect(() => {
+    if (mode !== 'viewer') return;
+    const onKey = (e) => {
+      if (e.code === 'Backquote' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        setConsoleVisible(v => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mode]);
+
+  // Reset console state when leaving viewer
+  const handleBackToTitleWithConsole = useCallback(() => {
+    setConsoleVisible(false);
+    interpreterRef.current = null;
+    handleBackToTitle();
+  }, [handleBackToTitle]);
+
+  const toggleConsole = useCallback(() => {
+    setConsoleVisible(v => !v);
   }, []);
 
   // Title screen
@@ -871,6 +920,8 @@ export function App() {
         info: viewerInfo,
         name: viewerName,
         onBack: handleBackToTitle,
+        quality: viewerQuality,
+        onQualityChange: handleQualityChange,
       }),
       React.createElement(ViewerError, { message: viewerError }),
     );

@@ -6,7 +6,7 @@ import { startLoop, stopLoop } from './engine.js';
 import { GameEvents, App } from './ui.js';
 
 // 3D modules
-import { updateControls, render3D, resize3D, updateParticles, controls, focusCamera, resetCamera, updateCameraAnim, scene, camera3D, configureViewerControls, configureBuilderControls, setViewerBackground, setBuilderBackground } from './renderer3d.js';
+import { updateControls, render3D, resize3D, updateParticles, controls, focusCamera, resetCamera, updateCameraAnim, scene, camera3D, renderer, cssRenderer, configureViewerControls, configureBuilderControls, setViewerBackground, setBuilderBackground } from './renderer3d.js';
 import { createGrid } from './grid3d.js';
 import { updateStructures3D } from './structures3d.js';
 import { initInput, updateInput } from './input.js';
@@ -19,9 +19,11 @@ import { SCALE } from './renderer3d.js';
 
 // PDB Viewer
 import { PDBViewer } from './pdb/viewer.js';
+import { createCommandInterpreter } from './pdb/commands.js';
 
 let pdbViewer = null;
 let viewerLoop = false;
+let cmdInterpreter = null;
 
 // --- Dev: post game state to server ---
 function postGameState() {
@@ -152,7 +154,10 @@ GameEvents.on('enterViewerMode', (data) => {
   configureViewerControls();
   setViewerBackground();
 
-  pdbViewer = new PDBViewer(scene, camera3D, controls);
+  pdbViewer = new PDBViewer(scene, camera3D, controls, renderer);
+
+  // Set initial post-processing quality
+  pdbViewer.setQuality(data.quality || 'low');
 
   // Start the viewer render loop
   viewerLoop = true;
@@ -163,8 +168,18 @@ GameEvents.on('enterViewerMode', (data) => {
   if (result) {
     const info = pdbViewer.getInfo();
     GameEvents.emit('viewerLoaded', info);
+
+    // Create command interpreter and notify UI
+    cmdInterpreter = createCommandInterpreter(pdbViewer);
+    GameEvents.emit('viewerReady', { interpreter: cmdInterpreter });
   } else {
     GameEvents.emit('viewerError', { message: 'Failed to parse PDB file' });
+  }
+});
+
+GameEvents.on('viewerQuality', (data) => {
+  if (pdbViewer) {
+    pdbViewer.setQuality(data.quality);
   }
 });
 
@@ -173,6 +188,7 @@ GameEvents.on('exitViewerMode', () => {
     pdbViewer.dispose();
     pdbViewer = null;
   }
+  cmdInterpreter = null;
   viewerLoop = false;
   stopLoop();
   configureBuilderControls();
@@ -185,7 +201,10 @@ function viewerUpdate(dt) {
 
 function viewerRender(alpha) {
   updateControls();
-  render3D();
+  if (pdbViewer) {
+    pdbViewer.render();
+  }
+  cssRenderer.render(scene, camera3D);
 }
 
 // ============================================================

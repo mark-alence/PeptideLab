@@ -25,7 +25,7 @@ const cz = GRID_H / 2;
 camera3D.position.set(cx, 25, cz + 30);
 
 // --- WebGL Renderer ---
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+export const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = false;
@@ -197,14 +197,13 @@ export function configureBuilderControls() {
 
 // --- Scene background / fog / lighting control for viewer mode ---
 export function setViewerBackground() {
-  scene.background = new THREE.Color(0x1a2030);
   scene.fog = null;
   // Hide builder lights — viewer adds its own
   ambientLight.visible = false;
   hemiLight.visible = false;
   dirLight.visible = false;
-  // Disable ACES tone mapping for viewer — it crushes molecular colors
-  renderer.toneMapping = THREE.LinearToneMapping;
+  // ACES tone mapping for cinematic look (MeshStandardMaterial handles it well)
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
 }
 

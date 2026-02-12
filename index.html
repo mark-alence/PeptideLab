@@ -303,7 +303,42 @@
   .viewer-stats {
     font-size: 0.8rem;
     color: #888;
+  }
+
+  /* ========== Viewer Quality Toggle ========== */
+  .viewer-quality-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     margin-left: auto;
+  }
+
+  .viewer-quality-label {
+    font-size: 0.7rem;
+    color: #666;
+    margin-right: 2px;
+    letter-spacing: 0.05em;
+  }
+
+  .viewer-quality-btn {
+    font-family: 'Courier New', monospace;
+    font-size: 0.7rem;
+    color: #777;
+    background: none;
+    border: 1px solid #2d3b4f;
+    border-radius: 3px;
+    padding: 2px 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .viewer-quality-btn:hover {
+    color: #aaa;
+    border-color: #444;
+  }
+  .viewer-quality-btn.active {
+    color: #58a6ff;
+    border-color: #58a6ff;
+    background: rgba(88, 166, 255, 0.1);
   }
 
   .viewer-error-toast {
@@ -852,6 +887,95 @@
   .action-bar { display: none; }
   .action-btn { display: none; }
 
+  /* ========== PyMOL Console ========== */
+  .pdb-console {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 220px;
+    background: rgba(10, 14, 20, 0.92);
+    border-top: 1px solid #2d3b4f;
+    display: flex;
+    flex-direction: column;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    z-index: 40;
+    pointer-events: auto;
+    animation: consoleSlideUp 0.15s ease-out;
+  }
+  @keyframes consoleSlideUp {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+  }
+
+  .pdb-console-output {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+    scroll-behavior: smooth;
+  }
+  .pdb-console-output::-webkit-scrollbar { width: 4px; }
+  .pdb-console-output::-webkit-scrollbar-track { background: transparent; }
+  .pdb-console-output::-webkit-scrollbar-thumb { background: #2d3b4f; border-radius: 2px; }
+
+  .console-line {
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .console-command { color: #33ff33; }
+  .console-output  { color: #999; }
+  .console-error   { color: #ff6666; }
+
+  .pdb-console-input-row {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    border-top: 1px solid #1e2a3d;
+    background: rgba(14, 18, 26, 0.95);
+    gap: 8px;
+  }
+
+  .console-prompt {
+    color: #33ff33;
+    font-weight: bold;
+    white-space: nowrap;
+  }
+
+  .pdb-console-input {
+    flex: 1;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    background: transparent;
+    border: none;
+    color: #33ff33;
+    outline: none;
+    caret-color: #33ff33;
+  }
+
+  .console-toggle-btn {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.7rem;
+    color: #666;
+    background: rgba(18, 25, 38, 0.90);
+    border: 1px solid #2d3b4f;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    pointer-events: auto;
+    z-index: 20;
+    transition: all 0.2s;
+  }
+  .console-toggle-btn:hover {
+    color: #33ff33;
+    border-color: #33ff33;
+    background: rgba(18, 25, 38, 0.95);
+  }
+
   /* ========== UI Fade during camera gestures ========== */
   .ui-faded > * {
     opacity: 0.15 !important;
@@ -1084,10 +1208,18 @@
       left: 8px;
       right: 8px;
       padding: 6px 10px;
-      gap: 8px;
+      gap: 6px;
+      flex-wrap: wrap;
     }
     .viewer-name { font-size: 0.85rem; }
     .viewer-stats { font-size: 0.7rem; }
+    .viewer-quality-toggle { gap: 3px; }
+    .viewer-quality-btn { font-size: 0.65rem; padding: 2px 6px; }
+
+    /* Console mobile tweaks */
+    .pdb-console { height: 180px; font-size: 0.7rem; }
+    .pdb-console-input { font-size: 0.7rem; }
+    .console-toggle-btn { bottom: 8px; right: 8px; }
   }
 </style>
 </head>
