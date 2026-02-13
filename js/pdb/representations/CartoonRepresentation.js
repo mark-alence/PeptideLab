@@ -20,97 +20,97 @@
 import * as THREE from 'three';
 import { BaseRepresentation } from './BaseRepresentation.js';
 
-// ---- Constants ----
-const COIL_RADIUS     = 0.25;
-const HELIX_WIDTH     = 2.0;
-const HELIX_THICKNESS = 0.4;
-const SHEET_WIDTH     = 1.6;
-const SHEET_THICKNESS = 0.25;
-const ARROW_WIDTH     = 2.4;
-const ARROW_RESIDUES  = 1.5;
-const SUBDIVISIONS    = 8;
+// ---- Tunable parameters (exported so the tuner panel can modify them) ----
+export const CARTOON_PARAMS = {
+  coilRadius:     0.25,
+  helixWidth:     2.0,
+  helixThickness: 0.35,
+  sheetWidth:     1.95,
+  sheetThickness: 0.40,
+  arrowWidth:     3.8,
+  arrowResidues:  1.6,
+  subdivisions:   12,
+  smoothIters:    5,
+  helixSmoothW:   0.15,
+  sheetSmoothW:   0.25,
+  coilSmoothW:    0.10,
+  sheetExponent:  11,
+  flatCycles:     4,
+  tipRefineIters: 10,
+};
+
+// ---- Fixed constants ----
 const PROFILE_N       = 16;
 const RING_VERTS      = PROFILE_N + 1;
-const SMOOTH_ITERS    = 5;   // moderate — preserves spiral + displacement
 
 const SS_COIL  = 0;
 const SS_HELIX = 1;
 const SS_SHEET = 2;
 
-// ---- Profile generators (return PROFILE_N [x,y] pairs) ----
+// ---- Profile generators (return { points, normals } with PROFILE_N entries) ----
 
 function circleProfile(radius) {
-  const pts = [];
+  const points = [], normals = [];
   for (let i = 0; i < PROFILE_N; i++) {
     const a = (i / PROFILE_N) * Math.PI * 2;
-    pts.push([Math.cos(a) * radius, Math.sin(a) * radius]);
+    const ca = Math.cos(a), sa = Math.sin(a);
+    points.push([ca * radius, sa * radius]);
+    normals.push([ca, sa]);
   }
-  return pts;
+  return { points, normals };
 }
 
 function ellipseProfile(halfW, halfH) {
-  const pts = [];
+  const points = [], normals = [];
   for (let i = 0; i < PROFILE_N; i++) {
     const a = (i / PROFILE_N) * Math.PI * 2;
-    pts.push([Math.cos(a) * halfW, Math.sin(a) * halfH]);
+    const ca = Math.cos(a), sa = Math.sin(a);
+    points.push([ca * halfW, sa * halfH]);
+    const nx = ca / halfW, ny = sa / halfH;
+    const len = Math.sqrt(nx * nx + ny * ny) || 1;
+    normals.push([nx / len, ny / len]);
   }
-  return pts;
+  return { points, normals };
 }
 
-function superEllipseProfile(halfW, halfH, n) {
-  const pts = [];
+function superEllipseProfile(halfW, halfH, exp) {
+  const points = [], normals = [];
   for (let i = 0; i < PROFILE_N; i++) {
     const a = (i / PROFILE_N) * Math.PI * 2;
-    const ca = Math.cos(a);
-    const sa = Math.sin(a);
-    const absCa = Math.abs(ca);
-    const absSa = Math.abs(sa);
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const absCa = Math.abs(ca), absSa = Math.abs(sa);
     const r = 1.0 / Math.pow(
-      Math.pow(absCa, n) + Math.pow(absSa, n),
-      1.0 / n
+      Math.pow(absCa, exp) + Math.pow(absSa, exp),
+      1.0 / exp
     );
-    pts.push([ca * r * halfW, sa * r * halfH]);
+    points.push([ca * r * halfW, sa * r * halfH]);
   }
-  return pts;
-}
-
-const COIL_PROFILE  = circleProfile(COIL_RADIUS);
-const HELIX_PROFILE = ellipseProfile(HELIX_WIDTH / 2, HELIX_THICKNESS / 2);
-const SHEET_PROFILE = superEllipseProfile(SHEET_WIDTH / 2, SHEET_THICKNESS / 2, 4);
-
-function getBaseProfile(ssType) {
-  if (ssType === SS_HELIX) return HELIX_PROFILE;
-  if (ssType === SS_SHEET) return SHEET_PROFILE;
-  return COIL_PROFILE;
+  // Compute normals from finite differences
+  for (let i = 0; i < PROFILE_N; i++) {
+    const prev = points[(i - 1 + PROFILE_N) % PROFILE_N];
+    const next = points[(i + 1) % PROFILE_N];
+    const dx = next[0] - prev[0];
+    const dy = next[1] - prev[1];
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    normals.push([dy / len, -dx / len]);
+  }
+  return { points, normals };
 }
 
 function lerpProfile(profA, profB, t) {
   const s = 1 - t;
-  const out = [];
+  const points = [], normals = [];
   for (let i = 0; i < PROFILE_N; i++) {
-    out.push([
-      profA[i][0] * s + profB[i][0] * t,
-      profA[i][1] * s + profB[i][1] * t,
+    points.push([
+      profA.points[i][0] * s + profB.points[i][0] * t,
+      profA.points[i][1] * s + profB.points[i][1] * t,
     ]);
+    const nx = profA.normals[i][0] * s + profB.normals[i][0] * t;
+    const ny = profA.normals[i][1] * s + profB.normals[i][1] * t;
+    const len = Math.sqrt(nx * nx + ny * ny) || 1;
+    normals.push([nx / len, ny / len]);
   }
-  return out;
-}
-
-function sheetProfileAtWidth(width) {
-  return superEllipseProfile(width / 2, SHEET_THICKNESS / 2, 4);
-}
-
-function computeProfileNormals(profile) {
-  const norms = [];
-  for (let i = 0; i < PROFILE_N; i++) {
-    const prev = profile[(i - 1 + PROFILE_N) % PROFILE_N];
-    const next = profile[(i + 1) % PROFILE_N];
-    const dx = next[0] - prev[0];
-    const dy = next[1] - prev[1];
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    norms.push([dy / len, -dx / len]);
-  }
-  return norms;
+  return { points, normals };
 }
 
 // ---- Representation ----
@@ -119,6 +119,14 @@ export class CartoonRepresentation extends BaseRepresentation {
   build() {
     const { model, materials, viewerGroup } = this;
     const { residues, chains, positions } = model;
+
+    // Snapshot tunable params and pre-build profiles
+    const P = this._p = { ...CARTOON_PARAMS };
+    this._coilProf  = circleProfile(P.coilRadius);
+    // Helix: wide axis = Y (normal direction = radially outward from helix axis)
+    //        thin axis = X (binormal direction = along helix axis)
+    this._helixProf = ellipseProfile(P.helixThickness / 2, P.helixWidth / 2);
+    this._sheetProf = superEllipseProfile(P.sheetWidth / 2, P.sheetThickness / 2, P.sheetExponent);
 
     this._chainMeshes = [];
 
@@ -152,8 +160,11 @@ export class CartoonRepresentation extends BaseRepresentation {
 
       if (caPositions.length < 2) continue;
 
-      // Smooth helix/sheet control points to remove CA zigzag
+      // Smooth control points, idealize helices, flatten sheets, refine arrows
       const smoothedPositions = this._smoothPositions(caPositions, ssPerCA);
+      this._idealizeHelices(smoothedPositions, ssPerCA);
+      this._flattenSheets(smoothedPositions, ssPerCA);
+      this._refineArrowTips(smoothedPositions, ssPerCA);
 
       const result = this._buildChainGeometry(
         smoothedPositions, caPositions, ssPerCA, caIndices,
@@ -185,32 +196,262 @@ export class CartoonRepresentation extends BaseRepresentation {
     const n = caPositions.length;
     const out = caPositions.map(p => p.clone());
 
-    for (let iter = 0; iter < SMOOTH_ITERS; iter++) {
-      const prev = out.map(p => p.clone());
-      for (let i = 0; i < n; i++) {
-        const ss = ssPerCA[i];
-        if (ss === SS_COIL) continue;
+    // Helices are handled by _idealizeHelices() — no smoothing pass here.
 
-        const w = ss === SS_HELIX ? 0.4 : 0.25;
+    // --- Sheet — Laplacian smoothing (controlled by smoothIters) ---
+    const sw = this._p.sheetSmoothW;
+    if (sw > 0) {
+      for (let iter = 0; iter < this._p.smoothIters; iter++) {
+        const prev = out.map(p => p.clone());
+        for (let i = 0; i < n; i++) {
+          if (ssPerCA[i] !== SS_SHEET) continue;
+          let sx = 0, sy = 0, sz = 0, count = 0;
+          for (let j = Math.max(0, i - 1); j <= Math.min(n - 1, i + 1); j++) {
+            if (ssPerCA[j] === SS_SHEET) {
+              sx += prev[j].x; sy += prev[j].y; sz += prev[j].z;
+              count++;
+            }
+          }
+          if (count <= 1) continue;
+          out[i].x += (sx / count - prev[i].x) * sw;
+          out[i].y += (sy / count - prev[i].y) * sw;
+          out[i].z += (sz / count - prev[i].z) * sw;
+        }
+      }
+    }
 
-        let sx = 0, sy = 0, sz = 0, count = 0;
-        for (let j = Math.max(0, i - 1); j <= Math.min(n - 1, i + 1); j++) {
-          if (ssPerCA[j] === ss) {
-            sx += prev[j].x;
-            sy += prev[j].y;
-            sz += prev[j].z;
+    // --- Pass 3: Coil — Laplacian smoothing (independent, 5 iters) ---
+    const cw = this._p.coilSmoothW;
+    if (cw > 0) {
+      for (let iter = 0; iter < 5; iter++) {
+        const prev = out.map(p => p.clone());
+        for (let i = 0; i < n; i++) {
+          if (ssPerCA[i] !== SS_COIL) continue;
+          let sx = 0, sy = 0, sz = 0, count = 0;
+          for (let j = Math.max(0, i - 1); j <= Math.min(n - 1, i + 1); j++) {
+            sx += prev[j].x; sy += prev[j].y; sz += prev[j].z;
             count++;
           }
+          if (count <= 1) continue;
+          out[i].x += (sx / count - prev[i].x) * cw;
+          out[i].y += (sy / count - prev[i].y) * cw;
+          out[i].z += (sz / count - prev[i].z) * cw;
         }
-        if (count <= 1) continue;
-
-        out[i].x += (sx / count - prev[i].x) * w;
-        out[i].y += (sy / count - prev[i].y) * w;
-        out[i].z += (sz / count - prev[i].z) * w;
       }
     }
 
     return out;
+  }
+
+  // ----------------------------------------------------------------
+  // Idealize helix geometry — fit each helix run to a perfect helix
+  // (constant radius, constant pitch, constant angular velocity).
+  // This eliminates the polygonal appearance from having only ~3.6
+  // CA positions per turn and regularizes the pitch.
+  // ----------------------------------------------------------------
+  _idealizeHelices(positions, ssPerCA) {
+    const n = positions.length;
+    this._helixRuns = [];
+    let i = 0;
+    while (i < n) {
+      if (ssPerCA[i] !== SS_HELIX) { i++; continue; }
+      let j = i;
+      while (j < n && ssPerCA[j] === SS_HELIX) j++;
+      if (j - i >= 4) {
+        this._idealizeHelixRun(positions, i, j);
+      }
+      i = j;
+    }
+  }
+
+  _idealizeHelixRun(positions, start, end) {
+    const count = end - start;
+
+    // 1. Centroid
+    const centroid = new THREE.Vector3();
+    for (let i = start; i < end; i++) centroid.add(positions[i]);
+    centroid.divideScalar(count);
+
+    // 2. Covariance matrix for PCA
+    const cov = [[0,0,0],[0,0,0],[0,0,0]];
+    for (let i = start; i < end; i++) {
+      const d = [
+        positions[i].x - centroid.x,
+        positions[i].y - centroid.y,
+        positions[i].z - centroid.z,
+      ];
+      for (let a = 0; a < 3; a++)
+        for (let b = 0; b < 3; b++)
+          cov[a][b] += d[a] * d[b];
+    }
+
+    // 3. Power iteration for largest eigenvector → helix axis
+    let axis = new THREE.Vector3(1, 1, 1).normalize();
+    for (let iter = 0; iter < 30; iter++) {
+      const nx = cov[0][0]*axis.x + cov[0][1]*axis.y + cov[0][2]*axis.z;
+      const ny = cov[1][0]*axis.x + cov[1][1]*axis.y + cov[1][2]*axis.z;
+      const nz = cov[2][0]*axis.x + cov[2][1]*axis.y + cov[2][2]*axis.z;
+      const len = Math.sqrt(nx*nx + ny*ny + nz*nz);
+      if (len < 1e-10) break;
+      axis.set(nx/len, ny/len, nz/len);
+    }
+
+    // Consistent direction: axis points from start toward end
+    if (positions[end-1].clone().sub(positions[start]).dot(axis) < 0) {
+      axis.negate();
+    }
+
+    // 4. Project CAs onto axis (height) and perpendicular (radial)
+    const heights = [], radials = [];
+    for (let i = start; i < end; i++) {
+      const d = positions[i].clone().sub(centroid);
+      const h = d.dot(axis);
+      heights.push(h);
+      radials.push(d.clone().addScaledVector(axis, -h));
+    }
+
+    // 5. Average radius
+    let avgRadius = 0;
+    for (const r of radials) avgRadius += r.length();
+    avgRadius /= count;
+
+    // 6. Build perpendicular frame (u, v)
+    const u = new THREE.Vector3();
+    const v = new THREE.Vector3();
+    const tmp = Math.abs(axis.y) < 0.9
+      ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+    u.crossVectors(axis, tmp).normalize();
+    v.crossVectors(axis, u).normalize();
+
+    // 7. Compute and unwrap angular positions
+    const angles = [];
+    for (const r of radials) {
+      angles.push(Math.atan2(r.dot(v), r.dot(u)));
+    }
+    for (let i = 1; i < count; i++) {
+      while (angles[i] - angles[i-1] >  Math.PI) angles[i] -= 2 * Math.PI;
+      while (angles[i] - angles[i-1] < -Math.PI) angles[i] += 2 * Math.PI;
+    }
+
+    // 8. Linear regression: angle = a0 + a1*t, height = h0 + h1*t
+    const tMean = (count - 1) / 2;
+    let angleMean = 0, heightMean = 0;
+    for (let i = 0; i < count; i++) { angleMean += angles[i]; heightMean += heights[i]; }
+    angleMean /= count;
+    heightMean /= count;
+
+    let tVar = 0, taCovar = 0, thCovar = 0;
+    for (let i = 0; i < count; i++) {
+      const dt = i - tMean;
+      tVar += dt * dt;
+      taCovar += dt * (angles[i] - angleMean);
+      thCovar += dt * (heights[i] - heightMean);
+    }
+
+    const a1 = taCovar / tVar;   // angular velocity (rad/residue)
+    const a0 = angleMean - a1 * tMean;
+    const h1 = thCovar / tVar;   // rise per residue
+    const h0 = heightMean - h1 * tMean;
+
+    // 9. Replace positions with ideal helix coordinates
+    for (let i = 0; i < count; i++) {
+      const angle  = a0 + a1 * i;
+      const height = h0 + h1 * i;
+      positions[start + i].copy(centroid)
+        .addScaledVector(axis, height)
+        .addScaledVector(u, Math.cos(angle) * avgRadius)
+        .addScaledVector(v, Math.sin(angle) * avgRadius);
+    }
+
+    // 10. Store run parameters for analytic sampling in _buildChainGeometry
+    this._helixRuns.push({
+      start, end,
+      centroid: centroid.clone(),
+      axis: axis.clone(),
+      u: u.clone(), v: v.clone(),
+      a0, a1, h0, h1, avgRadius,
+    });
+  }
+
+  // ----------------------------------------------------------------
+  // Flatten sheet residues onto their average plane.
+  // 4 iterative cycles — removes the backbone zigzag oscillation
+  // perpendicular to the sheet plane for clean, flat strands.
+  // ----------------------------------------------------------------
+  _flattenSheets(positions, ssPerCA) {
+    const n = positions.length;
+    const tmpV1 = new THREE.Vector3();
+    const tmpV2 = new THREE.Vector3();
+
+    for (let cycle = 0; cycle < this._p.flatCycles; cycle++) {
+      let i = 0;
+      while (i < n) {
+        if (ssPerCA[i] !== SS_SHEET) { i++; continue; }
+        let j = i;
+        while (j < n && ssPerCA[j] === SS_SHEET) j++;
+        if (j - i >= 3) {
+          // Compute average plane normal from consecutive CA–CA cross products
+          const planeNormal = new THREE.Vector3();
+          let crossCount = 0;
+          for (let k = i + 1; k < j - 1; k++) {
+            tmpV1.subVectors(positions[k], positions[k - 1]);
+            tmpV2.subVectors(positions[k + 1], positions[k]);
+            const cross = new THREE.Vector3().crossVectors(tmpV1, tmpV2);
+            if (cross.lengthSq() > 1e-10) {
+              if (crossCount > 0 && cross.dot(planeNormal) < 0) cross.negate();
+              planeNormal.add(cross);
+              crossCount++;
+            }
+          }
+          if (crossCount > 0) {
+            planeNormal.normalize();
+            // Compute centroid
+            const centroid = new THREE.Vector3();
+            for (let k = i; k < j; k++) centroid.add(positions[k]);
+            centroid.divideScalar(j - i);
+            // Project each position onto the plane
+            for (let k = i; k < j; k++) {
+              tmpV1.subVectors(positions[k], centroid);
+              const dist = tmpV1.dot(planeNormal);
+              positions[k].sub(tmpV2.copy(planeNormal).multiplyScalar(dist));
+            }
+          }
+        }
+        i = j;
+      }
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Straighten the C-terminal arrow tips of beta strands.
+  // 10 iterations of progressive interpolation toward a straight
+  // line through the last few residues of each strand.
+  // ----------------------------------------------------------------
+  _refineArrowTips(positions, ssPerCA) {
+    const n = positions.length;
+    const tmpTarget = new THREE.Vector3();
+
+    for (let i = 0; i < n; i++) {
+      if (ssPerCA[i] !== SS_SHEET || (i < n - 1 && ssPerCA[i + 1] === SS_SHEET)) continue;
+
+      // i is the C-terminal end of a strand — find the strand start
+      let strandStart = i;
+      while (strandStart > 0 && ssPerCA[strandStart - 1] === SS_SHEET) strandStart--;
+
+      const tipStart = Math.max(strandStart, i - 3);
+      if (i - tipStart < 2) continue;
+
+      const anchor = positions[tipStart].clone();
+      const tip = positions[i].clone();
+
+      for (let iter = 0; iter < this._p.tipRefineIters; iter++) {
+        for (let j = tipStart + 1; j < i; j++) {
+          const t = (j - tipStart) / (i - tipStart);
+          tmpTarget.lerpVectors(anchor, tip, t);
+          positions[j].lerp(tmpTarget, 0.3);
+        }
+      }
+    }
   }
 
   // ----------------------------------------------------------------
@@ -249,6 +490,7 @@ export class CartoonRepresentation extends BaseRepresentation {
     const strandEnds = [...strandEndSet];
 
     // 5. Sample spline
+    const SUBDIVISIONS = this._p.subdivisions;
     const totalSamples = (caCount - 1) * SUBDIVISIONS + 1;
 
     const vertCount = totalSamples * RING_VERTS + 2; // +2 end-cap centers
@@ -270,34 +512,74 @@ export class CartoonRepresentation extends BaseRepresentation {
       const caFloat = t * (caCount - 1);
       const caNearest = Math.min(Math.round(caFloat), caCount - 1);
 
-      curve.getPoint(t, pos);
+      // Check if this sample falls inside an idealized helix run
+      let helixRun = null;
+      if (this._helixRuns) {
+        for (const run of this._helixRuns) {
+          if (caFloat >= run.start && caFloat <= run.end - 1) {
+            helixRun = run;
+            break;
+          }
+        }
+      }
 
-      // Store ring center (spline point) for per-residue visibility
+      if (helixRun) {
+        // --- Analytic helix: perfectly round path + smooth normal rotation ---
+        const localT = caFloat - helixRun.start;
+        const angle  = helixRun.a0 + helixRun.a1 * localT;
+        const height = helixRun.h0 + helixRun.h1 * localT;
+        const cosA = Math.cos(angle), sinA = Math.sin(angle);
+
+        // Position on ideal helix
+        pos.copy(helixRun.centroid)
+          .addScaledVector(helixRun.axis, height)
+          .addScaledVector(helixRun.u, cosA * helixRun.avgRadius)
+          .addScaledVector(helixRun.v, sinA * helixRun.avgRadius);
+
+        // Tangent: derivative of helix position w.r.t. localT
+        tangent.copy(helixRun.axis).multiplyScalar(helixRun.h1)
+          .addScaledVector(helixRun.u, -sinA * helixRun.a1 * helixRun.avgRadius)
+          .addScaledVector(helixRun.v,  cosA * helixRun.a1 * helixRun.avgRadius)
+          .normalize();
+
+        // Radial direction (outward from helix axis)
+        tmpV.copy(helixRun.u).multiplyScalar(cosA)
+          .addScaledVector(helixRun.v, sinA);
+
+        // Normal = cross(tangent, radial) — perpendicular to both,
+        // so the wide ribbon face lies tangent to the helix cylinder
+        // (visible when looking at the helix from outside)
+        normal.crossVectors(tangent, tmpV).normalize();
+        binormal.crossVectors(tangent, normal).normalize();
+      } else {
+        // --- Default: CatmullRom spline + guide normal spline ---
+        curve.getPoint(t, pos);
+        curve.getTangent(t, tangent).normalize();
+
+        normalCurve.getPoint(t, normal);
+
+        // Re-orthogonalize against tangent (Gram-Schmidt)
+        normal.sub(tmpV.copy(tangent).multiplyScalar(normal.dot(tangent)));
+        if (normal.lengthSq() < 1e-6) {
+          const up = Math.abs(tangent.y) < 0.9 ? tmpV.set(0, 1, 0) : tmpV.set(1, 0, 0);
+          normal.crossVectors(tangent, up);
+        }
+        normal.normalize();
+
+        binormal.crossVectors(tangent, normal).normalize();
+      }
+
+      // Store ring center for per-residue visibility
       ringCenters[s * 3]     = pos.x;
       ringCenters[s * 3 + 1] = pos.y;
       ringCenters[s * 3 + 2] = pos.z;
-      curve.getTangent(t, tangent).normalize();
 
-      // Sample guide normal from the normal CatmullRom spline
-      normalCurve.getPoint(t, normal);
-
-      // Re-orthogonalize against tangent (Gram-Schmidt)
-      normal.sub(tmpV.copy(tangent).multiplyScalar(normal.dot(tangent)));
-      if (normal.lengthSq() < 1e-6) {
-        const up = Math.abs(tangent.y) < 0.9 ? tmpV.set(0, 1, 0) : tmpV.set(1, 0, 0);
-        normal.crossVectors(tangent, up);
-      }
-      normal.normalize();
-
-      binormal.crossVectors(tangent, normal).normalize();
-
-      const profile = this._getProfileAtSample(caFloat, caCount, ssPerCA, strandEnds, strandEndSet);
-      const profNorms = computeProfileNormals(profile);
+      const prof = this._getProfileAtSample(caFloat, caCount, ssPerCA, strandEnds, strandEndSet);
 
       for (let p = 0; p <= PROFILE_N; p++) {
         const pi = p % PROFILE_N;
-        const [px, py] = profile[pi];
-        const [pnx, pny] = profNorms[pi];
+        const [px, py] = prof.points[pi];
+        const [pnx, pny] = prof.normals[pi];
 
         posArr[vi * 3]     = pos.x + px * binormal.x + py * normal.x;
         posArr[vi * 3 + 1] = pos.y + px * binormal.y + py * normal.y;
@@ -497,18 +779,29 @@ export class CartoonRepresentation extends BaseRepresentation {
   // ----------------------------------------------------------------
   // Get cross-section profile at a spline sample position
   // ----------------------------------------------------------------
+  _getBaseProfile(ssType) {
+    if (ssType === SS_HELIX) return this._helixProf;
+    if (ssType === SS_SHEET) return this._sheetProf;
+    return this._coilProf;
+  }
+
+  _sheetProfileAtWidth(width) {
+    return superEllipseProfile(width / 2, this._p.sheetThickness / 2, this._p.sheetExponent);
+  }
+
   _getProfileAtSample(caFloat, caCount, ssPerCA, strandEnds, strandEndSet) {
     const caNearest = Math.min(Math.round(caFloat), caCount - 1);
+    const P = this._p;
 
     // 1. Check arrowhead zones
     if (ssPerCA[caNearest] === SS_SHEET) {
       for (let e = 0; e < strandEnds.length; e++) {
         const endIdx = strandEnds[e];
-        const arrowStart = endIdx - ARROW_RESIDUES;
+        const arrowStart = endIdx - P.arrowResidues;
         if (caFloat >= arrowStart && caFloat <= endIdx) {
           const distToEnd = endIdx - caFloat;
-          const width = ARROW_WIDTH * (distToEnd / ARROW_RESIDUES);
-          return width > 0.05 ? sheetProfileAtWidth(width) : circleProfile(0.05);
+          const width = P.arrowWidth * (distToEnd / P.arrowResidues);
+          return width > 0.05 ? this._sheetProfileAtWidth(width) : circleProfile(0.05);
         }
       }
     }
@@ -519,17 +812,25 @@ export class CartoonRepresentation extends BaseRepresentation {
 
     if (caFloor !== caCeil && ssPerCA[caFloor] !== ssPerCA[caCeil]) {
       const frac = caFloat - caFloor;
+      const ssA = ssPerCA[caFloor];
+      const ssB = ssPerCA[caCeil];
 
-      let profA = (ssPerCA[caFloor] === SS_SHEET && strandEndSet.has(caFloor))
+      // Coil↔helix or coil↔sheet: no gradual expansion — stay thin (coil) throughout
+      if (ssA === SS_COIL || ssB === SS_COIL) {
+        return this._coilProf;
+      }
+
+      // Helix↔sheet: blend between the two
+      let profA = (ssA === SS_SHEET && strandEndSet.has(caFloor))
         ? circleProfile(0.05)
-        : getBaseProfile(ssPerCA[caFloor]);
+        : this._getBaseProfile(ssA);
 
-      let profB = getBaseProfile(ssPerCA[caCeil]);
+      let profB = this._getBaseProfile(ssB);
       return lerpProfile(profA, profB, frac);
     }
 
     // 3. Base profile
-    return getBaseProfile(ssPerCA[caNearest]);
+    return this._getBaseProfile(ssPerCA[caNearest]);
   }
 
   // ----------------------------------------------------------------

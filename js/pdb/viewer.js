@@ -354,6 +354,7 @@ export class PDBViewer {
     this.baseBondScales = rep.getBaseBondScales();
     this.baseBondPositions = rep.getBaseBondPositions();
     this.baseBondQuats = rep.getBaseBondQuats();
+
   }
 
   /**

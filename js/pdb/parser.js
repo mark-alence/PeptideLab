@@ -275,17 +275,20 @@ export function parsePDB(pdbText) {
     }
   }
 
-  // Build chain list
-  const chainMap = new Map();
-  for (let ri = 0; ri < residues.length; ri++) {
-    const cid = residues[ri].chainId;
-    if (!chainMap.has(cid)) {
-      chainMap.set(cid, { id: cid, residueStart: ri, residueEnd: ri + 1 });
-    } else {
-      chainMap.get(cid).residueEnd = ri + 1;
+  // Build chain list — split on consecutive chain ID changes
+  const chains = [];
+  if (residues.length > 0) {
+    let curId = residues[0].chainId;
+    let curStart = 0;
+    for (let ri = 1; ri < residues.length; ri++) {
+      if (residues[ri].chainId !== curId) {
+        chains.push({ id: curId, residueStart: curStart, residueEnd: ri });
+        curId = residues[ri].chainId;
+        curStart = ri;
+      }
     }
+    chains.push({ id: curId, residueStart: curStart, residueEnd: residues.length });
   }
-  const chains = Array.from(chainMap.values());
 
   // Assign secondary structure from HELIX/SHEET records
   for (const h of helices) {
