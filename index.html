@@ -65,7 +65,7 @@
     position: fixed;
     top: 0;
     left: 0;
-    touch-action: none;
+    touch-action: manipulation;
     overscroll-behavior: none;
   }
 
@@ -1805,7 +1805,7 @@
     .viewer-name { font-size: 0.85rem; }
     .viewer-stats { font-size: 0.7rem; }
     .viewer-quality-toggle { gap: 3px; }
-    .viewer-quality-btn { font-size: 0.65rem; padding: 2px 6px; }
+    .viewer-quality-btn { font-size: 0.65rem; padding: 4px 10px; }
 
     /* Legend mobile */
     .viewer-legend {
@@ -1816,11 +1816,25 @@
       padding: 6px 8px;
     }
 
-    /* Console panel: full-screen on mobile */
+    /* Console panel: bottom sheet on mobile */
     .pdb-console-panel {
-      top: 0;
+      top: auto;
+      bottom: 0;
+      left: 0;
+      right: 0;
       width: 100%;
+      height: 50vh;
       border-left: none;
+      border-top: 1px solid #2d3b4f;
+      border-radius: 12px 12px 0 0;
+      transform: translateY(100%);
+      touch-action: pan-y;
+    }
+    .pdb-console-panel.open {
+      transform: translateY(0);
+    }
+    .pdb-console-output {
+      -webkit-overflow-scrolling: touch;
     }
     .pdb-console-input { font-size: 0.75rem; }
 
@@ -1830,12 +1844,12 @@
     .console-ai-message h2 { font-size: 0.95em; }
     .console-ai-message h3 { font-size: 0.9em; }
 
-    /* Console FAB mobile */
-    .console-fab { bottom: 12px; right: 12px; }
+    /* Console FAB mobile — above rep toolbar */
+    .console-fab { bottom: calc(52px + env(safe-area-inset-bottom, 0px)); right: 12px; }
 
-    /* Rep toolbar mobile */
+    /* Rep toolbar mobile — safe area */
     .rep-toolbar {
-      bottom: 12px;
+      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
       padding: 3px;
       gap: 1px;
     }
@@ -1845,6 +1859,22 @@
     }
 
     .api-key-popover { width: 240px; }
+
+    /* Viewer: load structure mobile — above rep toolbar */
+    .load-structure-wrap {
+      bottom: calc(52px + env(safe-area-inset-bottom, 0px));
+      left: 8px;
+    }
+    .load-structure-popover {
+      min-width: 220px;
+      max-width: calc(100vw - 24px);
+    }
+
+    /* Console: safe-area bottom padding */
+    .console-input-area {
+      padding-bottom: max(8px, calc(env(safe-area-inset-bottom, 0px) + 8px));
+    }
+
   }
 </style>
 </head>

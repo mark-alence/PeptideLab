@@ -175,6 +175,12 @@ export function configureViewerControls() {
   trackballControls.minDistance = 0;
   trackballControls.maxDistance = Infinity;
   trackballControls.enabled = true;
+  // Boost touch sensitivity on mobile for smaller gestures
+  if (window.matchMedia('(max-width: 768px)').matches) {
+    trackballControls.rotateSpeed = 3.0;
+    trackballControls.zoomSpeed = 1.8;
+    trackballControls.panSpeed = 1.0;
+  }
   trackballControls.handleResize();
 
   controls = trackballControls;

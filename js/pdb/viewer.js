@@ -144,8 +144,12 @@ export class PDBViewer {
   /**
    * Rebuild merged model/bonds from the structure manager,
    * resize state arrays, and rebuild representations.
+   * Preserves per-structure visual state (colors, visibility, scale, rep types).
    */
   _rebuildMergedState() {
+    // Save per-structure state before rebuild
+    const savedState = this._savePerStructureState();
+
     // Dispose current reps
     for (const rep of this.activeReps.values()) rep.dispose();
     this.activeReps.clear();
@@ -157,6 +161,71 @@ export class PDBViewer {
 
     this._buildMeshes();
     this._resizeStateArrays();
+
+    // Restore state for structures that existed before
+    if (this._restorePerStructureState(savedState)) {
+      // Ensure reps exist for all restored rep types
+      const repTypes = new Set(this.atomRepType);
+      for (const rt of repTypes) this._ensureRep(rt);
+      this._cleanupUnusedReps();
+      // Apply restored colors to all reps
+      for (const rep of this.activeReps.values()) {
+        rep.applyColors(this.atomColors);
+      }
+      this._syncRepVisibility();
+      this._updateCurrentRepType();
+    }
+  }
+
+  /**
+   * Save per-structure visual state keyed by structure name.
+   * @returns {Map|null}
+   */
+  _savePerStructureState() {
+    if (!this.model || !this.atomColors) return null;
+    const ranges = this.model._structureRanges;
+    if (!ranges) return null;
+
+    const state = new Map();
+    for (const [name, range] of ranges) {
+      const { atomOffset, atomCount } = range;
+      state.set(name, {
+        colors: this.atomColors.slice(atomOffset, atomOffset + atomCount),
+        visible: this.atomVisible.slice(atomOffset, atomOffset + atomCount),
+        scale: this.atomScale.slice(atomOffset, atomOffset + atomCount),
+        repType: this.atomRepType.slice(atomOffset, atomOffset + atomCount),
+      });
+    }
+    return state;
+  }
+
+  /**
+   * Restore per-structure visual state from a saved snapshot.
+   * @param {Map|null} savedState
+   * @returns {boolean} true if any state was restored
+   */
+  _restorePerStructureState(savedState) {
+    if (!savedState || !this.model) return false;
+    const ranges = this.model._structureRanges;
+    if (!ranges) return false;
+
+    let restored = false;
+    for (const [name, range] of ranges) {
+      const saved = savedState.get(name);
+      if (!saved) continue;
+
+      const { atomOffset, atomCount } = range;
+      const count = Math.min(atomCount, saved.colors.length);
+
+      for (let i = 0; i < count; i++) {
+        this.atomColors[atomOffset + i] = saved.colors[i];
+        this.atomRepType[atomOffset + i] = saved.repType[i];
+      }
+      this.atomVisible.set(saved.visible.subarray(0, count), atomOffset);
+      this.atomScale.set(saved.scale.subarray(0, count), atomOffset);
+      restored = true;
+    }
+    return restored;
   }
 
   /**

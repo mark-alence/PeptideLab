@@ -854,8 +854,8 @@ function LoadStructureButton() {
         setOpen(false);
       }
     };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
+    document.addEventListener('pointerdown', onClick);
+    return () => document.removeEventListener('pointerdown', onClick);
   }, [open]);
 
   const handleFetch = async () => {
@@ -948,7 +948,7 @@ export function App() {
   const [viewerInfo, setViewerInfo] = useState(null);
   const [viewerName, setViewerName] = useState('');
   const [viewerError, setViewerError] = useState('');
-  const [viewerQuality, setViewerQuality] = useState('low');
+  const [viewerQuality, setViewerQuality] = useState(isMobile ? 'off' : 'low');
   const [consoleVisible, setConsoleVisible] = useState(false);
   const [currentRep, setCurrentRep] = useState('ball_and_stick');
   const [interpreter, setInterpreter] = useState(null);
@@ -1056,7 +1056,10 @@ export function App() {
 
   // Viewer mode
   if (mode === 'viewer') {
-    return React.createElement(React.Fragment, null,
+    return React.createElement('div', {
+      className: isMobile && faded ? 'ui-faded' : '',
+      style: { display: 'contents' },
+    },
       React.createElement(ViewerInfoBar, {
         info: viewerInfo,
         name: viewerName,

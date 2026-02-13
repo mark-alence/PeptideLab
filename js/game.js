@@ -208,6 +208,22 @@ GameEvents.on('viewerQuality', (data) => {
 
 GameEvents.on('viewerRepChange', (data) => {
   if (pdbViewer) {
+    // If some atoms are hidden, apply rep only to visible atoms
+    // to preserve mixed-rep setups and hidden atoms' rep types
+    if (pdbViewer.atomVisible && pdbViewer.model) {
+      let hasHidden = false;
+      for (let i = 0; i < pdbViewer.model.atomCount; i++) {
+        if (!pdbViewer.atomVisible[i]) { hasHidden = true; break; }
+      }
+      if (hasHidden) {
+        const visible = new Set();
+        for (let i = 0; i < pdbViewer.model.atomCount; i++) {
+          if (pdbViewer.atomVisible[i]) visible.add(i);
+        }
+        pdbViewer.setRepresentationForAtoms(data.rep, visible);
+        return;
+      }
+    }
     pdbViewer.setRepresentation(data.rep);
   }
 });
