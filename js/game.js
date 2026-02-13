@@ -164,7 +164,7 @@ GameEvents.on('enterViewerMode', (data) => {
   startLoop(viewerUpdate, viewerRender);
 
   // Load the PDB data
-  const result = pdbViewer.loadFromText(data.pdbText);
+  const result = pdbViewer.loadFromText(data.pdbText, data.name);
   if (result) {
     const info = pdbViewer.getInfo();
     GameEvents.emit('viewerLoaded', info);
@@ -177,6 +177,18 @@ GameEvents.on('enterViewerMode', (data) => {
     GameEvents.emit('viewerReady', { interpreter: cmdInterpreter });
   } else {
     GameEvents.emit('viewerError', { message: 'Failed to parse PDB file' });
+  }
+});
+
+// Load additional structure into existing viewer
+GameEvents.on('loadAdditionalStructure', (data) => {
+  if (!pdbViewer) return;
+  const actualName = pdbViewer.addStructure(data.pdbText, data.name);
+  if (actualName) {
+    const info = pdbViewer.getInfo();
+    GameEvents.emit('viewerLoaded', info);
+  } else {
+    GameEvents.emit('viewerError', { message: 'Failed to parse additional PDB file' });
   }
 });
 

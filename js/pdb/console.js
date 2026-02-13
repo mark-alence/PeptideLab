@@ -68,9 +68,15 @@ export function PDBConsole({ visible, interpreter, onToggle }) {
   }, []);
 
   // Execute a single command through the interpreter
-  const execCommand = useCallback((cmd) => {
+  const execCommand = useCallback(async (cmd) => {
     if (!interpreter) return 'No interpreter available';
     const result = interpreter.execute(cmd);
+    // Handle async commands (e.g. load)
+    if (result && typeof result.then === 'function') {
+      const resolved = await result;
+      if (resolved !== null && resolved !== undefined) return String(resolved);
+      return null;
+    }
     if (result !== null && result !== undefined) return String(result);
     return null;
   }, [interpreter]);
@@ -117,7 +123,7 @@ export function PDBConsole({ visible, interpreter, onToggle }) {
       const outputLines = [];
       for (const cmd of commands) {
         outputLines.push({ type: 'ai-command', text: '  ' + cmd });
-        const result = execCommand(cmd);
+        const result = await execCommand(cmd);
         if (result !== null) {
           for (const rl of result.split('\n')) {
             outputLines.push({ type: 'output', text: '  ' + rl });
@@ -156,7 +162,22 @@ export function PDBConsole({ visible, interpreter, onToggle }) {
       // Direct command execution
       if (interpreter) {
         const result = interpreter.execute(trimmed);
-        if (result !== null && result !== undefined) {
+        // Handle async commands (e.g. load)
+        if (result && typeof result.then === 'function') {
+          setBusy(true);
+          addLine('output', 'Loading...');
+          result.then(msg => {
+            if (msg !== null && msg !== undefined) {
+              for (const line of String(msg).split('\n')) {
+                addLine('output', line);
+              }
+            }
+          }).catch(e => {
+            addLine('error', `Error: ${e.message}`);
+          }).finally(() => {
+            setBusy(false);
+          });
+        } else if (result !== null && result !== undefined) {
           const resultLines = String(result).split('\n');
           for (const line of resultLines) {
             addLine('output', line);

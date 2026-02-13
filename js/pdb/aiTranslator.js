@@ -50,6 +50,16 @@ const TOOLS = [
       required: ['expression'],
     },
   },
+  {
+    name: 'list_structures',
+    description:
+      'List all currently loaded structures with their names, atom counts, chain IDs, and assigned colors. Use this to see what structures are available for alignment, coloring, or selection.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 // ---- System prompt builder ----
@@ -101,9 +111,14 @@ Available commands:
   set_color <name>, [r,g,b] — Define custom color (0-1 float or 0-255 int)
   util.cbc <sel>         — Color by chain (automatic distinct colors)
   util.ss <sel>          — Color by secondary structure (helix=red, sheet=yellow, loop=green)
+  load <PDB_ID>          — Fetch and add a structure from RCSB (async)
+  align <mobile>, <target> — Superpose mobile structure onto target using Kabsch on CA atoms
+  remove <name>          — Remove a loaded structure
+  list                   — List all loaded structures with atom counts and colors
 
 Selection syntax:
   chain A                — Chain ID
+  model 1CRN            — Select atoms from a specific loaded structure
   resi 1-10+20+30-40     — Residue number ranges
   resn ALA+GLY           — Residue names
   name CA+CB             — Atom names
@@ -232,6 +247,18 @@ function handleEvaluateSelection(expression, interpreter) {
   }
 }
 
+function handleListStructures(interpreter) {
+  const model = interpreter?.getModel();
+  if (!model) return { error: 'No structure loaded' };
+  const ranges = model._structureRanges;
+  if (!ranges || ranges.size === 0) return { structures: [], count: 0 };
+  const structures = [];
+  for (const [name, range] of ranges) {
+    structures.push({ name, atomCount: range.atomCount, atomOffset: range.atomOffset });
+  }
+  return { structures, count: structures.length };
+}
+
 // ---- Multi-turn agentic loop ----
 
 const MAX_TURNS = 10;
@@ -309,6 +336,9 @@ export async function translateToCommands(userText, apiKey, interpreter, onProgr
           case 'evaluate_selection':
             result = handleEvaluateSelection(input.expression, interpreter);
             break;
+          case 'list_structures':
+            result = handleListStructures(interpreter);
+            break;
           default:
             result = { error: `Unknown tool: ${name}` };
         }
@@ -341,7 +371,7 @@ export async function translateToCommands(userText, apiKey, interpreter, onProgr
 
     // Detect if response is commands or informational text.
     // Commands start with a known keyword; plain text does not.
-    const CMD_KEYWORDS = /^(select|color|show|hide|represent|rep|zoom|center|orient|turn|reset|bg_color|count_atoms|delete|selections|ls|help|spectrum|set_color|util\.cbc|util\.chainbow|util\.ss|lines|as)\b/i;
+    const CMD_KEYWORDS = /^(select|color|show|hide|represent|rep|zoom|center|orient|turn|reset|bg_color|count_atoms|delete|selections|ls|help|spectrum|set_color|util\.cbc|util\.chainbow|util\.ss|lines|as|load|fetch|align|remove|list)\b/i;
     const isAllCommands = lines.length > 0 && lines.every(l => CMD_KEYWORDS.test(l));
 
     if (isAllCommands) {

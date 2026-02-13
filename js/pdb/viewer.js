@@ -3,12 +3,14 @@
 // Manages parsed protein model, representation rendering,
 // camera setup, cinematic lighting, post-processing, and
 // cleanup for mode switching.
+// Supports loading multiple structures via StructureManager.
 // ============================================================
 
 import * as THREE from 'three';
 import { parsePDB } from './parser.js';
 import { inferBonds } from './bondInference.js';
 import { ELEMENT_COLORS, DEFAULT_COLOR, REP_TYPES } from './constants.js';
+import { StructureManager } from './structureManager.js';
 import { createAtomMaterial, createBondMaterial } from './materials.js';
 import { createViewerLighting, removeViewerLighting, createEnvironmentMap, createRadialGradientBackground } from './lighting.js';
 import { PostProcessingPipeline } from './postProcessing.js';
@@ -42,6 +44,9 @@ export class PDBViewer {
     this.bonds = null;
     this.activeRep = null;
     this.currentRepType = REP_TYPES.BALL_AND_STICK;
+
+    // Multi-structure support
+    this.structureManager = new StructureManager();
 
     // Legacy refs for compatibility (some code may still check these)
     this.atomMesh = null;
@@ -81,24 +86,126 @@ export class PDBViewer {
 
   /**
    * Load and render a PDB structure from text.
+   * Clears any existing structures, then adds this one.
    *
    * @param {string} pdbText - Raw PDB file content
+   * @param {string} [name] - Optional structure name
    * @returns {{ model, bonds }} or null if parse failed
    */
-  loadFromText(pdbText) {
+  loadFromText(pdbText, name) {
     this.clearStructure();
+    return this.addStructure(pdbText, name);
+  }
 
+  /**
+   * Add an additional PDB structure (multi-structure support).
+   * Parses the PDB, registers it, and rebuilds the merged state.
+   *
+   * @param {string} pdbText - Raw PDB file content
+   * @param {string} [name] - Optional structure name
+   * @returns {{ model, bonds, name: string }} or null if parse failed
+   */
+  addStructure(pdbText, name) {
     const model = parsePDB(pdbText);
     if (!model) return null;
 
-    this.model = model;
-    this.bonds = inferBonds(model);
+    const bonds = inferBonds(model);
+    const structName = name || model.header?.pdbId || 'structure';
+    const actualName = this.structureManager.addStructure(structName, model, bonds);
 
-    this._buildMeshes();
-    this._initState();
+    this._rebuildMergedState();
+    this._applyStructureColor(actualName);
     this._centerCamera();
 
-    return { model: this.model, bonds: this.bonds };
+    return { model: this.model, bonds: this.bonds, name: actualName };
+  }
+
+  /**
+   * Remove a structure by name and rebuild.
+   *
+   * @param {string} name - Structure name to remove
+   * @returns {boolean} true if removed
+   */
+  removeStructure(name) {
+    if (!this.structureManager.removeStructure(name)) return false;
+
+    if (this.structureManager.count === 0) {
+      this.clearStructure();
+      return true;
+    }
+
+    this._rebuildMergedState();
+    this._centerCamera();
+    return true;
+  }
+
+  /**
+   * Rebuild merged model/bonds from the structure manager,
+   * resize state arrays, and rebuild representations.
+   */
+  _rebuildMergedState() {
+    // Dispose current rep
+    if (this.activeRep) {
+      this.activeRep.dispose();
+      this.activeRep = null;
+    }
+
+    this.model = this.structureManager.buildMergedModel();
+    this.bonds = this.structureManager.buildMergedBonds();
+
+    if (!this.model) return;
+
+    this._buildMeshes();
+    this._resizeStateArrays();
+  }
+
+  /**
+   * Initialize or resize per-atom state arrays to match the current model.
+   * Preserves element colors, sets new atoms to element defaults.
+   */
+  _resizeStateArrays() {
+    const n = this.model.atomCount;
+    const { atoms } = this.model;
+
+    // Colors: always rebuild from element defaults
+    this.atomColors = new Array(n);
+    for (let i = 0; i < n; i++) {
+      this.atomColors[i] = new THREE.Color(ELEMENT_COLORS[atoms[i].element] || DEFAULT_COLOR);
+    }
+
+    // Visibility: all visible
+    this.atomVisible = new Uint8Array(n).fill(1);
+
+    // Base scales from active rep
+    this.baseScales = this.activeRep ? this.activeRep.getBaseScales() : null;
+    this.baseBondScales = this.activeRep ? this.activeRep.getBaseBondScales() : null;
+
+    this._radiusScale = 0.3;
+    this._representation = 'sticks';
+
+    // Save initial camera state for reset
+    this._initialCameraPos = this.camera.position.clone();
+    this._initialTarget = this.controls.target.clone();
+  }
+
+  /**
+   * Apply a uniform tint color to atoms of a non-first structure.
+   *
+   * @param {string} name - Structure name
+   */
+  _applyStructureColor(name) {
+    const entry = this.structureManager.getStructure(name);
+    if (!entry || !entry.color) return; // first structure keeps element colors
+
+    const color = entry.color;
+    const start = entry.atomOffset;
+    const end = start + entry.atomCount;
+
+    for (let i = start; i < end; i++) {
+      this.atomColors[i].copy(color);
+    }
+
+    if (this.activeRep) this.activeRep.applyColors(this.atomColors);
   }
 
   /**
@@ -241,37 +348,8 @@ export class PDBViewer {
   }
 
   // ============================================================
-  // Console state management
+  // Atom coloring
   // ============================================================
-
-  /**
-   * Initialize per-atom state arrays after meshes are built.
-   */
-  _initState() {
-    const n = this.model.atomCount;
-    const { atoms } = this.model;
-
-    // Store current element colors
-    this.atomColors = new Array(n);
-    for (let i = 0; i < n; i++) {
-      this.atomColors[i] = new THREE.Color(ELEMENT_COLORS[atoms[i].element] || DEFAULT_COLOR);
-    }
-
-    // Visibility: 1 = visible, 0 = hidden
-    this.atomVisible = new Uint8Array(n).fill(1);
-
-    // Extract base scales from the active representation
-    this.baseScales = this.activeRep ? this.activeRep.getBaseScales() : null;
-    this.baseBondScales = this.activeRep ? this.activeRep.getBaseBondScales() : null;
-
-    // Current representation mode and the radius scale used during mesh creation
-    this._radiusScale = 0.3; // matches createAtomInstances default
-    this._representation = 'sticks';
-
-    // Save initial camera state for reset
-    this._initialCameraPos = this.camera.position.clone();
-    this._initialTarget = this.controls.target.clone();
-  }
 
   /**
    * Color specific atoms by hex color value.
@@ -306,6 +384,10 @@ export class PDBViewer {
     for (let i = 0; i < atoms.length; i++) {
       this.atomColors[i].setHex(ELEMENT_COLORS[atoms[i].element] || DEFAULT_COLOR);
     }
+    // Reapply structure colors for non-first structures
+    for (const name of this.structureManager.getStructureNames()) {
+      this._applyStructureColor(name);
+    }
     if (this.activeRep) this.activeRep.applyColors(this.atomColors);
   }
 
@@ -325,9 +407,6 @@ export class PDBViewer {
    * @param {Set<number>|number[]} indices
    */
   showAtoms(indices) {
-    const atomMul = this._representation === 'spheres' ? (1.0 / this._radiusScale)
-                  : this._representation === 'lines'   ? 0.35
-                  : 1.0;
     for (const i of indices) {
       this.atomVisible[i] = 1;
     }
@@ -338,9 +417,6 @@ export class PDBViewer {
    * Reset all atoms to visible.
    */
   resetVisibility() {
-    const atomMul = this._representation === 'spheres' ? (1.0 / this._radiusScale)
-                  : this._representation === 'lines'   ? 0.35
-                  : 1.0;
     this.atomVisible.fill(1);
     if (this.activeRep) this.activeRep.applyVisibility(this.atomVisible);
   }
@@ -406,67 +482,11 @@ export class PDBViewer {
   }
 
   /**
-   * Switch atom/bond representation mode.
-   * @param {'spheres'|'sticks'|'lines'} mode
-   */
-  setRepresentation(mode) {
-    const n = this.model.atomCount;
-
-    // Atom scale multiplier relative to baseScales (which are VDW * 0.3)
-    // spheres: full VDW → multiply by 1/0.3 ≈ 3.33
-    // sticks:  ball-and-stick → 1.0 (default)
-    // lines:   tiny dots → 0.35
-    const atomMul = mode === 'spheres' ? (1.0 / this._radiusScale)
-                  : mode === 'lines'   ? 0.35
-                  : 1.0;
-
-    for (let i = 0; i < n; i++) {
-      if (this.atomVisible[i]) {
-        this._setAtomScale(i, this.baseScales[i] * atomMul);
-      }
-    }
-    this.atomMesh.instanceMatrix.needsUpdate = true;
-
-    // Bonds: hidden for spheres, thin for lines, normal for sticks
-    if (this.bondMesh && this.bonds) {
-      const bondCount = this.bonds.length / 2;
-      const _mat = new THREE.Matrix4();
-      const _scl = new THREE.Vector3();
-
-      for (let bi = 0; bi < bondCount; bi++) {
-        const ai = this.bonds[bi * 2];
-        const aj = this.bonds[bi * 2 + 1];
-        const atomsVisible = this.atomVisible[ai] && this.atomVisible[aj];
-
-        for (let half = 0; half < 2; half++) {
-          const idx = bi * 2 + half;
-
-          if (mode === 'spheres' || !atomsVisible) {
-            _scl.set(0, 0, 0);
-          } else if (mode === 'lines') {
-            const base = this.baseBondScales[idx];
-            _scl.set(base.x * 0.4, base.y, base.z * 0.4);
-          } else {
-            _scl.copy(this.baseBondScales[idx]);
-          }
-
-          // Recompose from stored base transform (avoids decompose on zero-scale)
-          _mat.compose(this.baseBondPositions[idx], this.baseBondQuats[idx], _scl);
-          this.bondMesh.setMatrixAt(idx, _mat);
-        }
-      }
-      this.bondMesh.instanceMatrix.needsUpdate = true;
-    }
-
-    this._representation = mode;
-  }
-
-  /**
-   * Get current representation mode.
-   * @returns {'spheres'|'sticks'|'lines'}
+   * Get current representation type.
+   * @returns {string}
    */
   getRepresentation() {
-    return this._representation;
+    return this.currentRepType;
   }
 
   /**
@@ -546,7 +566,7 @@ export class PDBViewer {
   resetAll() {
     this.resetColors();
     this.resetVisibility();
-    this.setRepresentation('sticks');
+    this.setRepresentation(REP_TYPES.BALL_AND_STICK);
     if (this._initialCameraPos) {
       this.camera.position.copy(this._initialCameraPos);
       this.controls.target.copy(this._initialTarget);
@@ -561,23 +581,7 @@ export class PDBViewer {
   // ---- Private helpers ----
 
   /**
-   * Set instance scale for a single atom.
-   * Uses model.positions directly (atoms have identity quaternion)
-   * to avoid decompose failures on zero-scale matrices.
-   */
-  _setAtomScale(i, s) {
-    const _mat = new THREE.Matrix4();
-    const _pos = new THREE.Vector3();
-    const _quat = new THREE.Quaternion(); // identity
-    const _scl = new THREE.Vector3(s, s, s);
-    const p = this.model.positions;
-    _pos.set(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
-    _mat.compose(_pos, _quat, _scl);
-    this.atomMesh.setMatrixAt(i, _mat);
-  }
-
-  /**
-   * Apply atomColors array to the atom InstancedMesh.
+   * Apply atomColors array to the active representation.
    */
   _applyAtomColors() {
     if (this.activeRep) {
@@ -621,6 +625,7 @@ export class PDBViewer {
     this.baseBondScales = null;
     this.baseBondPositions = null;
     this.baseBondQuats = null;
+    this.structureManager.clear();
   }
 
   /**
@@ -661,11 +666,26 @@ export class PDBViewer {
   getInfo() {
     if (!this.model) return null;
     const { atomCount, residues, chains } = this.model;
-    return {
+    const info = {
       atomCount,
       residueCount: residues.length,
       chainCount: chains.length,
       chains: chains.map(c => c.id),
     };
+
+    // Multi-structure info
+    if (this.structureManager.count > 1) {
+      info.structureCount = this.structureManager.count;
+      info.structures = this.structureManager.getStructureNames().map(name => {
+        const entry = this.structureManager.getStructure(name);
+        return {
+          name: entry.name,
+          atomCount: entry.atomCount,
+          color: entry.color ? '#' + entry.color.getHexString() : 'element',
+        };
+      });
+    }
+
+    return info;
   }
 }

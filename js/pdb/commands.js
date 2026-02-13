@@ -6,6 +6,8 @@
 import { parseSelection, createSelectionStore } from './selection.js';
 import { REP_TYPES } from './constants.js';
 import { SS_HELIX, SS_SHEET } from './parser.js';
+import { kabschAlign, pairCAAtoms, applyTransform } from './kabsch.js';
+import { GameEvents } from '../ui.js';
 
 // Callback for notifying UI when representation changes from console
 let _onRepChanged = null;
@@ -422,6 +424,94 @@ export function createCommandInterpreter(viewer) {
       return `Rotated ${angle}\u00B0 around ${axis} axis`;
     },
 
+    // Multi-structure commands
+    load(args) {
+      const pdbId = (args || '').trim().toUpperCase();
+      if (!pdbId || pdbId.length !== 4) {
+        return 'Usage: load <4-char PDB ID> (e.g. load 4HHB)';
+      }
+      // Return a Promise — console.js handles async results
+      return (async () => {
+        const url = `https://files.rcsb.org/download/${pdbId}.pdb`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`PDB ID "${pdbId}" not found on RCSB`);
+        const pdbText = await resp.text();
+        const actualName = viewer.addStructure(pdbText, pdbId);
+        if (!actualName) throw new Error(`Failed to parse PDB data for ${pdbId}`);
+        const info = viewer.getInfo();
+        GameEvents.emit('viewerLoaded', info);
+        return `Loaded ${actualName} (${viewer.structureManager.getStructure(actualName).atomCount} atoms)`;
+      })();
+    },
+
+    fetch(args) {
+      return commands.load(args);
+    },
+
+    align(args) {
+      if (!args) return 'Usage: align <mobile>, <target>';
+      const [mobileName, targetName] = splitComma(args);
+      if (!mobileName || !targetName) return 'Usage: align <mobile>, <target>';
+
+      const sm = viewer.structureManager;
+      const mobileEntry = sm.getStructure(mobileName);
+      const targetEntry = sm.getStructure(targetName);
+
+      if (!mobileEntry) return `Structure "${mobileName}" not found. Use "list" to see loaded structures.`;
+      if (!targetEntry) return `Structure "${targetName}" not found. Use "list" to see loaded structures.`;
+
+      // Pair CA atoms between the two models
+      const { mobileIndices, targetIndices, count } = pairCAAtoms(mobileEntry.model, targetEntry.model);
+      if (count < 3) return `Only ${count} matching CA atoms found — need at least 3 for alignment`;
+
+      // Extract coordinates for paired CAs
+      const mobileXYZ = new Float64Array(count * 3);
+      const targetXYZ = new Float64Array(count * 3);
+      for (let i = 0; i < count; i++) {
+        const mi = mobileIndices[i];
+        const ti = targetIndices[i];
+        mobileXYZ[i * 3]     = mobileEntry.model.positions[mi * 3];
+        mobileXYZ[i * 3 + 1] = mobileEntry.model.positions[mi * 3 + 1];
+        mobileXYZ[i * 3 + 2] = mobileEntry.model.positions[mi * 3 + 2];
+        targetXYZ[i * 3]     = targetEntry.model.positions[ti * 3];
+        targetXYZ[i * 3 + 1] = targetEntry.model.positions[ti * 3 + 1];
+        targetXYZ[i * 3 + 2] = targetEntry.model.positions[ti * 3 + 2];
+      }
+
+      // Run Kabsch alignment
+      const { rotation, mobileCenter, targetCenter, rmsd } = kabschAlign(mobileXYZ, targetXYZ, count);
+
+      // Apply transform to mobile model's positions
+      applyTransform(mobileEntry.model, rotation, mobileCenter, targetCenter);
+
+      // Rebuild merged state so the viewer reflects the new positions
+      viewer._rebuildMergedState();
+
+      return `Aligned ${mobileEntry.name} → ${targetEntry.name} (${count} CA pairs, RMSD: ${rmsd.toFixed(3)} Å)`;
+    },
+
+    remove(args) {
+      const name = (args || '').trim();
+      if (!name) return 'Usage: remove <structure_name>';
+      const removed = viewer.removeStructure(name);
+      if (!removed) return `Structure "${name}" not found. Use "list" to see loaded structures.`;
+      const info = viewer.getInfo();
+      if (info) GameEvents.emit('viewerLoaded', info);
+      return `Removed structure "${name}"`;
+    },
+
+    list() {
+      const sm = viewer.structureManager;
+      if (sm.count === 0) return 'No structures loaded';
+      const lines = ['Loaded structures:'];
+      for (const entry of sm._orderedEntries()) {
+        const colorStr = entry.color ? `#${entry.color.getHexString()}` : 'element colors';
+        const chainIds = [...new Set(entry.model.chains.map(c => c.id))].join(',');
+        lines.push(`  ${entry.name}: ${entry.atomCount} atoms, chains: ${chainIds}, color: ${colorStr}`);
+      }
+      return lines.join('\n');
+    },
+
     help() {
       return [
         'Commands:',
@@ -444,6 +534,12 @@ export function createCommandInterpreter(viewer) {
         '  util.cbc <sel>        Color by chain (distinct colors)',
         '  util.ss <sel>         Color by secondary structure',
         '',
+        'Multi-structure:',
+        '  load <PDB_ID>         Fetch & add structure from RCSB',
+        '  align <mob>, <tgt>    Superpose mobile onto target (Kabsch on CAs)',
+        '  remove <name>         Remove a loaded structure',
+        '  list                  List all loaded structures',
+        '',
         'Representations:',
         '  as <name>             Switch representation mode',
         '  cartoon               Cartoon ribbon',
@@ -459,6 +555,7 @@ export function createCommandInterpreter(viewer) {
         '  name CA+CB            Atom names',
         '  elem C+N              Element symbols',
         '  ss H+S                Secondary structure (H=helix, S=sheet)',
+        '  model 1CRN            Select atoms from a specific structure',
         '  backbone / sidechain  Backbone or sidechain atoms',
         '  hetatm / polymer      HETATM or standard residue atoms',
         '  organic / inorganic   Non-polymer molecules (with/without carbon)',
@@ -530,7 +627,12 @@ export function createCommandInterpreter(viewer) {
     if (!handler) return `Unknown command: "${parsed.cmd}". Type "help" for available commands.`;
 
     try {
-      return handler(parsed.args);
+      const result = handler(parsed.args);
+      // If the handler returns a Promise (e.g. load command), wrap errors
+      if (result && typeof result.then === 'function') {
+        return result.catch(e => `Error: ${e.message}`);
+      }
+      return result;
     } catch (e) {
       return `Error: ${e.message}`;
     }
