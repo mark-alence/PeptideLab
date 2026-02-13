@@ -266,12 +266,19 @@ export function parsePDB(pdbText) {
   }
 
   // Assign CA, C, N indices per residue
+  // For nucleic acids (no CA), use C3' as the backbone trace atom
   for (const res of residues) {
+    let c3Idx = -1;
     for (let j = res.atomStart; j < res.atomEnd; j++) {
       const name = atoms[j].name;
       if (name === 'CA') res.caIndex = j;
       else if (name === 'C' && atoms[j].element === 'C') res.cIndex = j;
       else if (name === 'N' && atoms[j].element === 'N') res.nIndex = j;
+      else if (name === "C3'") c3Idx = j;
+    }
+    // Fallback: use C3' for nucleic acid residues
+    if (res.caIndex < 0 && c3Idx >= 0) {
+      res.caIndex = c3Idx;
     }
   }
 
