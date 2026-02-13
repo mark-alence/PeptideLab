@@ -166,24 +166,28 @@ export function getCanvas() {
   return renderer.domElement;
 }
 
-// --- Viewer mode: switch to TrackballControls for infinite free rotation ---
+// --- Viewer mode controls ---
 export function configureViewerControls() {
-  orbitControls.enabled = false;
-
-  // Sync trackball target from orbit controls
-  trackballControls.target.copy(orbitControls.target);
-  trackballControls.minDistance = 0;
-  trackballControls.maxDistance = Infinity;
-  trackballControls.enabled = true;
-  // Boost touch sensitivity on mobile for smaller gestures
   if (window.matchMedia('(max-width: 768px)').matches) {
-    trackballControls.rotateSpeed = 3.0;
-    trackballControls.zoomSpeed = 1.8;
-    trackballControls.panSpeed = 1.0;
+    // Mobile: use OrbitControls for clean pinch-to-zoom (DOLLY_PAN)
+    trackballControls.enabled = false;
+    orbitControls.maxPolarAngle = Math.PI;
+    orbitControls.minPolarAngle = 0;
+    orbitControls.minDistance = 1;
+    orbitControls.maxDistance = Infinity;
+    orbitControls.enabled = true;
+    orbitControls.update();
+    controls = orbitControls;
+  } else {
+    // Desktop: TrackballControls for infinite free rotation
+    orbitControls.enabled = false;
+    trackballControls.target.copy(orbitControls.target);
+    trackballControls.minDistance = 0;
+    trackballControls.maxDistance = Infinity;
+    trackballControls.enabled = true;
+    trackballControls.handleResize();
+    controls = trackballControls;
   }
-  trackballControls.handleResize();
-
-  controls = trackballControls;
 }
 
 // --- Restore builder mode controls ---
