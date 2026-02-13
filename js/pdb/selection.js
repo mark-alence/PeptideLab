@@ -265,6 +265,7 @@ class Parser {
         case 'b':         this.advance(); return this.selectBFactor();
         case 'neighbor':
         case 'bound_to':  this.advance(); return this.selectNeighbor(this.parsePrimary());
+        case 'model':     this.advance(); return this.selectModel();
         case 'index':     this.advance(); return this.selectIndex();
         case 'id':        this.advance(); return this.selectId();
         case 'all':     this.advance(); return allAtoms(this.model.atomCount);
@@ -610,6 +611,24 @@ class Parser {
           break;
         }
       }
+    }
+    return set;
+  }
+
+  selectModel() {
+    const t = this.peek();
+    if (t.type !== T_WORD) throw new Error('Expected model name after "model"');
+    const name = this.advance().value.toLowerCase();
+    const ranges = this.model._structureRanges;
+    if (!ranges) throw new Error('No structure ranges available (single structure loaded?)');
+    const range = ranges.get(name);
+    if (!range) {
+      const available = [...ranges.keys()].join(', ');
+      throw new Error(`Model "${name}" not found. Available: ${available}`);
+    }
+    const set = new Set();
+    for (let i = range.atomOffset; i < range.atomOffset + range.atomCount; i++) {
+      set.add(i);
     }
     return set;
   }

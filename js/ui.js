@@ -837,6 +837,109 @@ function RepToolbar({ currentRep, onRepChange }) {
   );
 }
 
+// --- Load Structure Button (viewer mode: add additional structures) ---
+function LoadStructureButton() {
+  const [open, setOpen] = useState(false);
+  const [pdbId, setPdbId] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const popoverRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  // Close popover when clicking outside
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
+
+  const handleFetch = async () => {
+    const id = pdbId.trim().toUpperCase();
+    if (!id || id.length !== 4) {
+      setError('Enter a 4-character PDB ID');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const url = `https://files.rcsb.org/download/${id}.pdb`;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`PDB ID "${id}" not found`);
+      const text = await resp.text();
+      GameEvents.emit('loadAdditionalStructure', { pdbText: text, name: id });
+      setPdbId('');
+      setOpen(false);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFile = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      GameEvents.emit('loadAdditionalStructure', { pdbText: reader.result, name: file.name.replace(/\.(pdb|ent|pdb1)$/i, '') });
+      setOpen(false);
+    };
+    reader.onerror = () => setError('Failed to read file');
+    reader.readAsText(file);
+  };
+
+  const handleKeyDown = (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') handleFetch();
+    if (e.key === 'Escape') setOpen(false);
+  };
+
+  return React.createElement('div', { className: 'load-structure-wrap', ref: popoverRef },
+    React.createElement('button', {
+      className: 'load-structure-btn',
+      onClick: () => setOpen(o => !o),
+      title: 'Load additional structure',
+    }, '+ Structure'),
+    open && React.createElement('div', { className: 'load-structure-popover' },
+      React.createElement('div', { className: 'load-structure-title' }, 'Load Structure'),
+      React.createElement('div', { className: 'load-structure-row' },
+        React.createElement('input', {
+          type: 'text',
+          className: 'load-structure-input',
+          placeholder: 'PDB ID (e.g. 4HHB)',
+          value: pdbId,
+          maxLength: 4,
+          onChange: (e) => setPdbId(e.target.value.toUpperCase()),
+          onKeyDown: handleKeyDown,
+          disabled: loading,
+          autoFocus: true,
+        }),
+        React.createElement('button', {
+          className: 'load-structure-fetch-btn',
+          onClick: handleFetch,
+          disabled: loading,
+        }, loading ? '...' : 'Fetch'),
+      ),
+      React.createElement('button', {
+        className: 'load-structure-file-btn',
+        onClick: () => fileInputRef.current?.click(),
+      }, 'Open PDB File'),
+      React.createElement('input', {
+        ref: fileInputRef,
+        type: 'file',
+        accept: '.pdb,.ent,.pdb1',
+        style: { display: 'none' },
+        onChange: (e) => handleFile(e.target.files[0]),
+      }),
+      error && React.createElement('div', { className: 'load-structure-error' }, error),
+    ),
+  );
+}
+
 // --- App Root ---
 export function App() {
   // mode: 'title' | 'builder' | 'viewer'
@@ -861,7 +964,7 @@ export function App() {
     setViewerName(name || 'Structure');
     setViewerError('');
     setViewerInfo(null);
-    GameEvents.emit('enterViewerMode', { pdbText, quality: viewerQuality });
+    GameEvents.emit('enterViewerMode', { pdbText, name: name || 'Structure', quality: viewerQuality });
   }, [viewerQuality]);
 
   const handleBackToTitle = useCallback(() => {
@@ -966,6 +1069,7 @@ export function App() {
         currentRep,
         onRepChange: handleRepChange,
       }),
+      React.createElement(LoadStructureButton),
       !consoleVisible && React.createElement('button', {
         className: 'console-fab',
         onClick: toggleConsole,

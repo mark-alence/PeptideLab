@@ -107,9 +107,15 @@ export function PDBConsole({ visible, interpreter, onToggle, onLegendUpdate }) {
   }, []);
 
   // Execute a single command through the interpreter
-  const execCommand = useCallback((cmd) => {
+  const execCommand = useCallback(async (cmd) => {
     if (!interpreter) return 'No interpreter available';
     const result = interpreter.execute(cmd);
+    // Handle async commands (e.g. load)
+    if (result && typeof result.then === 'function') {
+      const resolved = await result;
+      if (resolved !== null && resolved !== undefined) return String(resolved);
+      return null;
+    }
     if (result !== null && result !== undefined) return String(result);
     return null;
   }, [interpreter]);
@@ -151,7 +157,7 @@ export function PDBConsole({ visible, interpreter, onToggle, onLegendUpdate }) {
         const outputLines = [];
         for (const cmd of commands) {
           outputLines.push({ type: 'ai-command', text: '  ' + cmd });
-          const result = execCommand(cmd);
+          const result = await execCommand(cmd);
           commandLogRef.current.push({ cmd, result });
           if (result !== null) {
             for (const rl of result.split('\n')) {
@@ -192,11 +198,31 @@ export function PDBConsole({ visible, interpreter, onToggle, onLegendUpdate }) {
       // Direct command execution
       if (interpreter) {
         const result = interpreter.execute(trimmed);
-        const resultStr = (result !== null && result !== undefined) ? String(result) : null;
-        commandLogRef.current.push({ cmd: trimmed, result: resultStr });
-        if (resultStr) {
-          for (const line of resultStr.split('\n')) {
-            addLine('output', line);
+        // Handle async commands (e.g. load)
+        if (result && typeof result.then === 'function') {
+          setBusy(true);
+          addLine('output', 'Loading...');
+          result.then(msg => {
+            const resultStr = (msg !== null && msg !== undefined) ? String(msg) : null;
+            commandLogRef.current.push({ cmd: trimmed, result: resultStr });
+            if (resultStr) {
+              for (const line of resultStr.split('\n')) {
+                addLine('output', line);
+              }
+            }
+          }).catch(e => {
+            commandLogRef.current.push({ cmd: trimmed, result: `Error: ${e.message}` });
+            addLine('error', `Error: ${e.message}`);
+          }).finally(() => {
+            setBusy(false);
+          });
+        } else {
+          const resultStr = (result !== null && result !== undefined) ? String(result) : null;
+          commandLogRef.current.push({ cmd: trimmed, result: resultStr });
+          if (resultStr) {
+            for (const line of resultStr.split('\n')) {
+              addLine('output', line);
+            }
           }
         }
       } else {

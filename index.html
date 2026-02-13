@@ -1174,6 +1174,104 @@
     background: rgba(88, 166, 255, 0.12);
   }
 
+  /* ========== Load Structure Button ========== */
+  .load-structure-wrap {
+    position: absolute;
+    bottom: 16px;
+    left: 12px;
+    pointer-events: auto;
+    z-index: 20;
+  }
+  .load-structure-btn {
+    font-family: 'Courier New', monospace;
+    font-size: 0.7rem;
+    color: #888;
+    background: rgba(10, 14, 20, 0.85);
+    border: 1px solid #2d3b4f;
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .load-structure-btn:hover {
+    color: #58a6ff;
+    border-color: #58a6ff;
+  }
+  .load-structure-popover {
+    position: absolute;
+    bottom: 40px;
+    left: 0;
+    background: rgba(10, 14, 20, 0.95);
+    border: 1px solid #2d3b4f;
+    border-radius: 8px;
+    padding: 12px;
+    min-width: 240px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .load-structure-title {
+    font-family: 'Courier New', monospace;
+    font-size: 0.75rem;
+    color: #58a6ff;
+    margin-bottom: 8px;
+    font-weight: bold;
+  }
+  .load-structure-row {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  .load-structure-input {
+    flex: 1;
+    font-family: 'Courier New', monospace;
+    font-size: 0.75rem;
+    color: #ddd;
+    background: rgba(30, 40, 60, 0.8);
+    border: 1px solid #2d3b4f;
+    border-radius: 4px;
+    padding: 5px 8px;
+    outline: none;
+  }
+  .load-structure-input:focus {
+    border-color: #58a6ff;
+  }
+  .load-structure-fetch-btn {
+    font-family: 'Courier New', monospace;
+    font-size: 0.7rem;
+    color: #58a6ff;
+    background: rgba(88, 166, 255, 0.1);
+    border: 1px solid #58a6ff;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  .load-structure-fetch-btn:hover {
+    background: rgba(88, 166, 255, 0.2);
+  }
+  .load-structure-file-btn {
+    width: 100%;
+    font-family: 'Courier New', monospace;
+    font-size: 0.7rem;
+    color: #888;
+    background: none;
+    border: 1px dashed #2d3b4f;
+    border-radius: 4px;
+    padding: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .load-structure-file-btn:hover {
+    color: #ccc;
+    border-color: #58a6ff;
+  }
+  .load-structure-error {
+    font-family: 'Courier New', monospace;
+    font-size: 0.65rem;
+    color: #ff6b6b;
+    margin-top: 6px;
+  }
   .console-busy {
     color: #c084fc;
     animation: blink 1s steps(2, start) infinite;
