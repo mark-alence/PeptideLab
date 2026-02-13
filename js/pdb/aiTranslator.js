@@ -13,23 +13,32 @@ const TOOLS = [
   {
     name: 'get_structure_info',
     description:
-      'Get an overview of the loaded protein structure: chains, sequences, secondary structure breakdown, identical chain groups, and ligands/HETATM residues.',
+      'Get an overview of a loaded protein structure: chains, sequences, secondary structure breakdown, identical chain groups, and ligands/HETATM residues. When multiple structures are loaded, pass structure_name to query a specific one; omit it to get info about the merged view.',
     input_schema: {
       type: 'object',
-      properties: {},
+      properties: {
+        structure_name: {
+          type: 'string',
+          description: 'Name of a specific loaded structure (e.g. "1CRN"). Omit to query the merged model.',
+        },
+      },
       required: [],
     },
   },
   {
     name: 'list_residues',
     description:
-      'List all residues in a specific chain as parallel arrays of residue numbers, residue names (3-letter codes), and secondary structure types.',
+      'List all residues in a specific chain as parallel arrays of residue numbers, residue names (3-letter codes), and secondary structure types. When multiple structures are loaded, pass structure_name to query a specific one; omit it to query the merged model (where chain IDs may collide).',
     input_schema: {
       type: 'object',
       properties: {
         chain_id: {
           type: 'string',
           description: 'Chain identifier (e.g. "A")',
+        },
+        structure_name: {
+          type: 'string',
+          description: 'Name of a specific loaded structure (e.g. "1CRN"). Omit to query the merged model.',
         },
       },
       required: ['chain_id'],
@@ -103,10 +112,33 @@ function buildCommandLogContext(commandLog) {
 
 // ---- System prompt builder ----
 
-function buildSystemPrompt(model, commandLog) {
+function buildSystemPrompt(model, commandLog, interpreter) {
   // Compact structure context so simple requests don't need tool calls
   let structureCtx = '';
-  if (model) {
+  const sm = interpreter?.getStructureManager?.();
+  if (sm && sm.count > 1) {
+    // Multiple structures: show per-structure summaries
+    const parts = [];
+    for (const entry of sm._orderedEntries()) {
+      const m = entry.model;
+      const h = m.header || {};
+      const lines = [];
+      lines.push(`Structure: ${entry.name}`);
+      if (h.pdbId) lines.push(`  PDB ID: ${h.pdbId}`);
+      if (h.title) lines.push(`  Title: ${h.title}`);
+      if (h.source) lines.push(`  Source organism: ${h.source}`);
+      const chainSummaries = m.chains.map(c => {
+        const count = c.residueEnd - c.residueStart;
+        return `Chain ${c.id}: ${count} residues`;
+      });
+      lines.push(`  Chains: ${chainSummaries.join(', ')}`);
+      lines.push(`  Atoms: ${m.atomCount}`);
+      if (entry.color) lines.push(`  Color: #${entry.color.getHexString()}`);
+      parts.push(lines.join('\n'));
+    }
+    structureCtx = `\n\nCurrently loaded structures (${sm.count}):\n${parts.join('\n\n')}`;
+  } else if (model) {
+    // Single structure: original compact format
     const h = model.header || {};
     const metaLines = [];
     if (h.pdbId) metaLines.push(`PDB ID: ${h.pdbId}`);
@@ -125,17 +157,30 @@ function buildSystemPrompt(model, commandLog) {
     structureCtx = `\n\nCurrently loaded structure:\n  ${metaLines.join('\n  ')}`;
   }
 
+  // Build visual state snapshot
+  let visualStateCtx = '';
+  if (interpreter?.getVisualState) {
+    const vs = interpreter.getVisualState();
+    if (vs) visualStateCtx = `\n\nCurrent visual state:\n${vs}`;
+  }
+
   return `You are an assistant for a PDB protein viewer with a PyMOL-style console.
 
-You have tools to query the loaded structure. Use them when you need specific residue numbers, chain info, or to verify selections. For simple action requests (e.g. "color chain A red"), you can respond directly without tools.
+You have tools to query the loaded structure(s). Use them when you need specific residue numbers, chain info, or to verify selections. For simple action requests (e.g. "color chain A red"), you can respond directly without tools.
+
+When multiple structures are loaded, use the structure_name parameter on get_structure_info and list_residues to query a specific structure. Without structure_name, these tools query the merged model where chain IDs may collide across structures. Use list_structures to see all loaded structures. Use "model NAME" in selection expressions to target a specific structure.
 
 If the user asks a QUESTION about the structure (e.g. "what chains are there?", "how many helices?"), use tools to look up the answer, then reply with a well-formatted markdown answer. Use headers, bold, lists, code blocks, and tables as appropriate. Do NOT emit commands for questions.
 
-If the user requests an ACTION (e.g. "color even residues blue", "hide chain B"), respond with ONLY commands, one per line — no explanations, no markdown, no code fences.
+If the user requests an ACTION (e.g. "color even residues blue", "hide chain B"), respond with ONLY commands, one per line — no explanations, no markdown, no code fences. Follow the user's request literally — if they say "hide the rest" or "only show X", do NOT add extra elements (protein backbone, cartoon context, etc.) unless explicitly asked. Show exactly what was requested, nothing more.
+
+CRITICAL: The commands listed below (color, show, hide, represent, zoom, etc.) are CONSOLE TEXT COMMANDS. Emit them as plain text lines in your response. Do NOT call them as tools — they are not tools. Your only callable tools are: get_structure_info, list_residues, evaluate_selection, update_legend, and list_structures.
 
 If a request mentions "bonds" — consider whether the user wants to detect/add new bonds between selections (use the "bond" command) or just change visual representation (use "as sticks" etc.). When the context involves an interface, cross-chain contacts, or specific atom pairs, prefer the "bond" command.
 
 If the user asks about interactions, hydrogen bonds, salt bridges, or contacts between selections, use the "contacts" command. This shows dashed-line overlays on top of any representation and is ideal for visualizing non-covalent interactions at interfaces.
+
+When a request is ambiguous or involves choosing between multiple instances of a residue, ligand, or chain (e.g. "remove the 5MC that is far away"), ALWAYS use tools (list_residues, get_structure_info, evaluate_selection) to identify the specific residue numbers and chains BEFORE emitting commands. Then use direct selection (e.g. "hide resi 6 and chain B") rather than distance-based filtering ("within X of ..."). Distance filters like "within" operate on individual atoms, not whole residues, so they can clip residues in half. Use "byres" if you must filter by distance. If you still can't determine which instance the user means, ask them to clarify rather than guessing.
 
 Available commands:
   select <name>, <sel>   — Store a named selection
@@ -198,15 +243,29 @@ Colors: red green blue cyan magenta yellow white orange pink salmon slate gray w
 
 Color guidelines: Choose colors that are visually distinct from each other — never pair similar shades (e.g. blue/marine/skyblue, or red/salmon/firebrick) in the same visualization. Prefer high-contrast combinations like red+blue, green+magenta, cyan+orange, yellow+purple. Never change the background color (bg_color) unless the user explicitly asks for it.
 
-When you execute visual commands (color, show/hide, represent, spectrum, util.cbc, util.ss, etc.), ALWAYS call the update_legend tool to describe what the visualization shows. Include all relevant color-to-meaning mappings.${structureCtx}
+When you execute visual commands (color, show/hide, represent, spectrum, util.cbc, util.ss, etc.), ALWAYS call the update_legend tool to describe what the visualization shows. Include all relevant color-to-meaning mappings.${structureCtx}${visualStateCtx}
 
-IMPORTANT: The console command history below shows commands already executed in this session (both user-typed and AI-generated). Use this to understand the current state of the visualization — what's visible, hidden, colored, selected, etc. — so you can build on it rather than starting from scratch.${buildCommandLogContext(commandLog)}`;
+IMPORTANT: The "Current visual state" section above (if present) is the authoritative source for what's currently on screen — representations, visibility, colors, contacts, selections, and scale. Prefer it over inferring state from command history. Build incrementally on the current state — only change what the user asks to change. Do NOT reset or hide everything and start over unless the user explicitly asks to reset. If the user says "also show X" or "add Y", keep existing setup and add to it.
+
+CAUTION: The "show" command makes hidden atoms visible. If some atoms were intentionally hidden (check the visual state), use targeted selections that won't re-reveal them. For example, if chain C's 5CM is hidden, use "show sticks, resn 5CM and chain B" instead of "show sticks, resn 5CM" which would show both.
+
+The command history below shows commands already executed for additional context.${buildCommandLogContext(commandLog)}`;
 }
 
 // ---- Tool handlers ----
 
-function handleGetStructureInfo(model) {
-  if (!model) return { error: 'No structure loaded' };
+function handleGetStructureInfo(mergedModel, interpreter, structureName) {
+  if (!mergedModel) return { error: 'No structure loaded' };
+
+  // Resolve which model to inspect
+  let model = mergedModel;
+  if (structureName) {
+    const sm = interpreter?.getStructureManager?.();
+    if (!sm) return { error: 'Structure manager unavailable' };
+    const entry = sm.getStructure(structureName);
+    if (!entry) return { error: `Structure "${structureName}" not found. Use list_structures to see available names.` };
+    model = entry.model;
+  }
 
   const chains = model.chains.map(c => {
     const residues = model.residues.slice(c.residueStart, c.residueEnd);
@@ -261,20 +320,35 @@ function handleGetStructureInfo(model) {
   if (h.method) meta.method = h.method;
   if (h.resolution) meta.resolution = h.resolution;
 
-  return {
+  const result = {
     ...meta,
     totalAtoms: model.atomCount,
     chains,
     identicalChainGroups: identicalGroups,
     ligands: Array.from(hetResidues.values()),
   };
+  if (structureName) result.structureName = structureName;
+  return result;
 }
 
-function handleListResidues(model, chainId) {
-  if (!model) return { error: 'No structure loaded' };
+function handleListResidues(mergedModel, interpreter, chainId, structureName) {
+  if (!mergedModel) return { error: 'No structure loaded' };
+
+  // Resolve which model to inspect
+  let model = mergedModel;
+  if (structureName) {
+    const sm = interpreter?.getStructureManager?.();
+    if (!sm) return { error: 'Structure manager unavailable' };
+    const entry = sm.getStructure(structureName);
+    if (!entry) return { error: `Structure "${structureName}" not found. Use list_structures to see available names.` };
+    model = entry.model;
+  }
 
   const chain = model.chains.find(c => c.id === chainId);
-  if (!chain) return { error: `Chain "${chainId}" not found` };
+  if (!chain) {
+    const available = model.chains.map(c => c.id).join(', ');
+    return { error: `Chain "${chainId}" not found${structureName ? ` in structure "${structureName}"` : ''}. Available chains: ${available}` };
+  }
 
   const residues = model.residues.slice(chain.residueStart, chain.residueEnd);
   const residueNumbers = [];
@@ -305,13 +379,25 @@ function handleEvaluateSelection(expression, interpreter) {
 }
 
 function handleListStructures(interpreter) {
-  const model = interpreter?.getModel();
-  if (!model) return { error: 'No structure loaded' };
-  const ranges = model._structureRanges;
-  if (!ranges || ranges.size === 0) return { structures: [], count: 0 };
+  const sm = interpreter?.getStructureManager?.();
+  if (!sm || sm.count === 0) return { error: 'No structure loaded' };
+
   const structures = [];
-  for (const [name, range] of ranges) {
-    structures.push({ name, atomCount: range.atomCount, atomOffset: range.atomOffset });
+  for (const entry of sm._orderedEntries()) {
+    const m = entry.model;
+    const h = m.header || {};
+    const chainIds = m.chains.map(c => c.id);
+    const info = {
+      name: entry.name,
+      atomCount: entry.atomCount,
+      chains: chainIds,
+    };
+    if (h.pdbId) info.pdbId = h.pdbId;
+    if (h.title) info.title = h.title;
+    if (h.classification) info.classification = h.classification;
+    if (h.source) info.source = h.source;
+    if (entry.color) info.color = `#${entry.color.getHexString()}`;
+    structures.push(info);
   }
   return { structures, count: structures.length };
 }
@@ -333,10 +419,11 @@ const MAX_TURNS = 10;
  */
 export async function translateToCommands(userText, apiKey, interpreter, onProgress, history, onLegendUpdate, commandLog) {
   const model = interpreter?.getModel() || null;
-  const systemPrompt = buildSystemPrompt(model, commandLog);
+  const systemPrompt = buildSystemPrompt(model, commandLog, interpreter);
 
   // Append user message to persistent history
   const messages = history || [];
+  const historyLen = messages.length; // snapshot so we can rollback on error
   messages.push({ role: 'user', content: userText });
 
   // Commands may appear in tool_use turns (e.g. alongside update_legend).
@@ -345,25 +432,32 @@ export async function translateToCommands(userText, apiKey, interpreter, onProgr
   const accumulatedCommands = [];
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-5-20250929',
-        max_tokens: 1024,
-        system: systemPrompt,
-        tools: TOOLS,
-        messages,
-      }),
-    });
+    let resp;
+    try {
+      resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 1024,
+          system: systemPrompt,
+          tools: TOOLS,
+          messages,
+        }),
+      });
+    } catch (e) {
+      messages.length = historyLen;
+      throw new Error(`Network error: ${e.message}`);
+    }
 
     if (!resp.ok) {
       const body = await resp.text();
+      messages.length = historyLen; // rollback so retries start clean
       if (resp.status === 401) throw new Error('Invalid API key');
       throw new Error(`API error ${resp.status}: ${body}`);
     }
@@ -390,10 +484,10 @@ export async function translateToCommands(userText, apiKey, interpreter, onProgr
         let result;
         switch (name) {
           case 'get_structure_info':
-            result = handleGetStructureInfo(model);
+            result = handleGetStructureInfo(model, interpreter, input.structure_name);
             break;
           case 'list_residues':
-            result = handleListResidues(model, input.chain_id);
+            result = handleListResidues(model, interpreter, input.chain_id, input.structure_name);
             break;
           case 'evaluate_selection':
             result = handleEvaluateSelection(input.expression, interpreter);

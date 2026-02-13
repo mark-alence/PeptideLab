@@ -5,7 +5,7 @@
 
 import { parseSelection, createSelectionStore } from './selection.js';
 import { findBondsBetween } from './bondInference.js';
-import { REP_TYPES } from './constants.js';
+import { REP_TYPES, ELEMENT_COLORS, DEFAULT_COLOR } from './constants.js';
 import { SS_HELIX, SS_SHEET } from './parser.js';
 import { INTERACTION_TYPES, detectHBonds, detectSaltBridges, detectCovalent, detectDistance } from './interactionDetector.js';
 import { kabschAlign, pairCAAtoms, applyTransform } from './kabsch.js';
@@ -971,7 +971,168 @@ export function createCommandInterpreter(viewer) {
     }
   }
 
-  return { execute, namedSelections, getModel, getBonds };
+  function getStructureManager() {
+    return viewer.structureManager;
+  }
+
+  // ---- Visual state summary helpers ----
+
+  function summarizeRepresentation() {
+    const model = getModel();
+    if (!model || !viewer.atomRepType || !viewer.atomVisible) return null;
+
+    const repCounts = {};
+    let hiddenCount = 0;
+
+    for (let i = 0; i < model.atomCount; i++) {
+      if (!viewer.atomVisible[i]) {
+        hiddenCount++;
+        continue;
+      }
+      const rep = viewer.atomRepType[i];
+      repCounts[rep] = (repCounts[rep] || 0) + 1;
+    }
+
+    // Default: all visible, all ball_and_stick
+    const repKeys = Object.keys(repCounts);
+    if (hiddenCount === 0 && repKeys.length === 1 && repKeys[0] === REP_TYPES.BALL_AND_STICK) {
+      return null;
+    }
+
+    if (repKeys.length === 0) return 'Rep: all hidden';
+
+    const repStr = 'Rep: ' + Object.entries(repCounts).map(([r, c]) => `${r}(${c})`).join(', ');
+    return hiddenCount > 0 ? repStr + `, hidden:${hiddenCount}` : repStr;
+  }
+
+  function summarizeVisibility() {
+    const model = getModel();
+    if (!model || !viewer.atomVisible) return null;
+
+    const { atoms } = model;
+    const hiddenByChain = {};
+    const totalByChain = {};
+
+    for (let i = 0; i < model.atomCount; i++) {
+      const chain = atoms[i].chainId;
+      totalByChain[chain] = (totalByChain[chain] || 0) + 1;
+      if (!viewer.atomVisible[i]) {
+        hiddenByChain[chain] = (hiddenByChain[chain] || 0) + 1;
+      }
+    }
+
+    const parts = [];
+    for (const chain of Object.keys(totalByChain)) {
+      const hidden = hiddenByChain[chain] || 0;
+      if (hidden === 0) continue;
+      if (hidden === totalByChain[chain]) {
+        parts.push(`${chain}:hidden`);
+      } else {
+        parts.push(`${chain}:${hidden}/${totalByChain[chain]} hidden`);
+      }
+    }
+
+    return parts.length > 0 ? 'Visibility: ' + parts.join(', ') : null;
+  }
+
+  function summarizeColors() {
+    const model = getModel();
+    if (!model || !viewer.atomColors) return null;
+
+    const { atoms } = model;
+    const chainInfo = {}; // chainId -> { allDefault, colors: Set<hex> }
+
+    for (let i = 0; i < model.atomCount; i++) {
+      if (!viewer.atomVisible[i]) continue;
+      const chain = atoms[i].chainId;
+      if (!chainInfo[chain]) chainInfo[chain] = { allDefault: true, colors: new Set() };
+
+      const currentHex = viewer.atomColors[i].getHex();
+      const expectedHex = ELEMENT_COLORS[atoms[i].element] || DEFAULT_COLOR;
+
+      chainInfo[chain].colors.add(currentHex);
+      if (currentHex !== expectedHex) {
+        chainInfo[chain].allDefault = false;
+      }
+    }
+
+    const parts = [];
+    for (const [chainId, info] of Object.entries(chainInfo)) {
+      if (info.allDefault) continue;
+      if (info.colors.size === 1) {
+        const hex = [...info.colors][0];
+        parts.push(`${chainId}:#${hex.toString(16).padStart(6, '0')}`);
+      } else {
+        parts.push(`${chainId}:mixed`);
+      }
+    }
+
+    return parts.length > 0 ? 'Colors: ' + parts.join(', ') : null;
+  }
+
+  function summarizeInteractions() {
+    if (!viewer.interactionOverlay) return null;
+    const layers = viewer.interactionOverlay.getLayerInfo();
+    if (!layers || layers.length === 0) return null;
+
+    const parts = layers.map(l => `${l.type}(${l.count})`);
+    return 'Contacts: ' + parts.join(', ');
+  }
+
+  function summarizeSelections() {
+    if (namedSelections.size === 0) return null;
+    const parts = [];
+    for (const [name, set] of namedSelections) {
+      parts.push(`${name}(${set.size})`);
+    }
+    return 'Selections: ' + parts.join(', ');
+  }
+
+  function summarizeScale() {
+    const model = getModel();
+    if (!model || !viewer.atomScale) return null;
+
+    let hasNonDefault = false;
+    let minScale = Infinity, maxScale = -Infinity;
+
+    for (let i = 0; i < model.atomCount; i++) {
+      const s = viewer.atomScale[i];
+      if (s !== 1.0) {
+        hasNonDefault = true;
+        if (s < minScale) minScale = s;
+        if (s > maxScale) maxScale = s;
+      }
+    }
+
+    if (!hasNonDefault) return null;
+    if (minScale === maxScale) return `Scale: ${minScale}`;
+    return `Scale: ${minScale}-${maxScale}`;
+  }
+
+  function summarizeBackground() {
+    const bg = viewer.scene?.background;
+    if (!bg || !bg.isColor) return null; // still texture (default gradient)
+    return `Background: #${bg.getHex().toString(16).padStart(6, '0')}`;
+  }
+
+  function getVisualState() {
+    const model = getModel();
+    if (!model) return '';
+
+    const parts = [
+      summarizeRepresentation(),
+      summarizeVisibility(),
+      summarizeColors(),
+      summarizeInteractions(),
+      summarizeSelections(),
+      summarizeScale(),
+      summarizeBackground(),
+    ].filter(Boolean);
+
+    return parts.length > 0 ? parts.join('\n') : '';
+  }
+
+  return { execute, namedSelections, getModel, getBonds, getStructureManager, getVisualState };
 }
 
 function parseHexColor(str) {
