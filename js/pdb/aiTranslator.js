@@ -50,11 +50,50 @@ const TOOLS = [
       required: ['expression'],
     },
   },
+  {
+    name: 'update_legend',
+    description:
+      'Update the viewer legend overlay to describe the current visualization. Call this whenever you change colors, representations, or visibility so the user can understand what they are seeing.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short title (e.g. "By Chain", "Secondary Structure")' },
+        entries: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              color: { type: 'string', description: 'CSS color string (hex like #FF0000, or name)' },
+              label: { type: 'string', description: 'What this color represents' },
+            },
+            required: ['color', 'label'],
+          },
+          description: 'Color legend entries (swatch + label pairs)',
+        },
+        representation: { type: 'string', description: 'Current representation mode if changed (e.g. "Cartoon", "Ball & Stick")' },
+      },
+      required: ['title', 'entries'],
+    },
+  },
 ];
+
+// ---- Command log formatter ----
+
+function buildCommandLogContext(commandLog) {
+  if (!commandLog || commandLog.length === 0) return '';
+  // Take last 50 commands to avoid token bloat
+  const recent = commandLog.slice(-50);
+  const logLines = recent.map(entry => {
+    let line = `> ${entry.cmd}`;
+    if (entry.result) line += `\n  ${entry.result}`;
+    return line;
+  });
+  return `\n\nConsole command history (most recent last):\n${logLines.join('\n')}`;
+}
 
 // ---- System prompt builder ----
 
-function buildSystemPrompt(model) {
+function buildSystemPrompt(model, commandLog) {
   // Compact structure context so simple requests don't need tool calls
   let structureCtx = '';
   if (model) {
@@ -80,16 +119,20 @@ function buildSystemPrompt(model) {
 
 You have tools to query the loaded structure. Use them when you need specific residue numbers, chain info, or to verify selections. For simple action requests (e.g. "color chain A red"), you can respond directly without tools.
 
-If the user asks a QUESTION about the structure (e.g. "what chains are there?", "how many helices?"), use tools to look up the answer, then reply with a short plain-text answer. Do NOT emit commands for questions.
+If the user asks a QUESTION about the structure (e.g. "what chains are there?", "how many helices?"), use tools to look up the answer, then reply with a well-formatted markdown answer. Use headers, bold, lists, code blocks, and tables as appropriate. Do NOT emit commands for questions.
 
 If the user requests an ACTION (e.g. "color even residues blue", "hide chain B"), respond with ONLY commands, one per line — no explanations, no markdown, no code fences.
+
+If a request mentions "bonds" — consider whether the user wants to detect/add new bonds between selections (use the "bond" command) or just change visual representation (use "as sticks" etc.). When the context involves an interface, cross-chain contacts, or specific atom pairs, prefer the "bond" command.
+
+If the user asks about interactions, hydrogen bonds, salt bridges, or contacts between selections, use the "contacts" command. This shows dashed-line overlays on top of any representation and is ideal for visualizing non-covalent interactions at interfaces.
 
 Available commands:
   select <name>, <sel>   — Store a named selection
   color <color>, <sel>   — Color atoms (default: all). "atomic" resets to element colors
-  show <sel>             — Unhide atoms (default: all)
-  hide <sel>             — Hide atoms
-  represent <mode>       — spheres | sticks | lines (alias: rep)
+  show [rep,] <sel>      — Show atoms. If rep provided, also switch those atoms to that representation. Different selections can have different representations (e.g., show cartoon, chain A then show sticks, chain B).
+  hide [rep,] <sel>      — Hide atoms
+  represent <mode>       — spheres | sticks | cartoon | ball_and_stick | lines (alias: rep). Global: switches ALL atoms.
   zoom <sel>             — Fit camera to selection
   center <sel>           — Orbit around selection centroid
   orient <sel>           — Orient camera for best view of selection
@@ -97,7 +140,15 @@ Available commands:
   reset                  — Reset all colors/visibility/camera
   bg_color <color>       — Set background color
   count_atoms <sel>      — Count atoms
+  bond <sel1>, <sel2>[, <cutoff>] — Detect and add bonds between two selections. Uses covalent radii by default; optional cutoff in Angstroms overrides. Example: bond chain A, chain B or bond elem ZN, chain A, 2.8
+  unbond <sel1>, <sel2>  — Remove bonds between two selections. Example: unbond chain A, chain B
+  contacts <type>, <sel1>, <sel2>[, <cutoff>] — Show non-covalent interaction overlay as dashed lines. Types: hbonds (H-bonds, 3.5A default), salt_bridges (charged groups, 4.0A), covalent (radii-based), distance (requires cutoff). Example: contacts hbonds, chain A, chain B
+  contacts list [<type>]  — List individual interaction distances from active overlays, sorted by distance. If no type given, lists all. Example: contacts list hbonds
+  contacts clear [<type>] — Remove interaction overlays. "contacts clear" removes all; "contacts clear hbonds" removes only H-bonds
+  distance <sel1>, <sel2> — Measure distance between two selections. Single atoms: direct distance. Multiple atoms: minimum distance pair. Alias: get_distance. Example: distance name CA and resi 10, name CA and resi 20
   spectrum <prop>, <palette>, <sel> — Gradient coloring. Properties: count (residue index), b (B-factor), chain. Palettes: rainbow, blue_white_red, red_white_blue, blue_red, green_white_magenta, yellow_cyan_white
+  set sphere_scale, <value>[, <sel>] — Scale atom sphere radius (multiplier, default all)
+  set stick_radius, <value>[, <sel>] — Scale bond cylinder radius (multiplier, default all) (dont use this unless absolutely necessary)
   set_color <name>, [r,g,b] — Define custom color (0-1 float or 0-255 int)
   util.cbc <sel>         — Color by chain (automatic distinct colors)
   util.ss <sel>          — Color by secondary structure (helix=red, sheet=yellow, loop=green)
@@ -125,10 +176,16 @@ Selection syntax:
   all / none             — All or no atoms
   and, or, not, ( )      — Boolean operators
   byres <sel>            — Expand to full residues
-  within 4.0 of <sel>    — Atoms within distance (Å), includes selection
-  around 4.0 of <sel>    — Atoms within distance (Å), excludes selection
+  within 4.0 of <sel>    — Atoms within distance (Å), includes selection. IMPORTANT: "within/around" goes BEFORE the target, not after! Correct: "chain A and within 4.0 of chain B". Wrong: "chain A and chain B around 4.0"
+  around 4.0 of <sel>    — Atoms within distance (Å), excludes selection. Same syntax as within.
 
-Colors: red green blue cyan magenta yellow white orange pink salmon slate gray wheat violet marine olive teal forest firebrick chocolate black lime purple gold hotpink skyblue lightblue deepblue carbon nitrogen oxygen sulfur. Also hex: #FF0000 or 0xFF0000.${structureCtx}`;
+Colors: red green blue cyan magenta yellow white orange pink salmon slate gray wheat violet marine olive teal forest firebrick chocolate black lime purple gold hotpink skyblue lightblue deepblue carbon nitrogen oxygen sulfur. Also hex: #FF0000 or 0xFF0000.
+
+Color guidelines: Choose colors that are visually distinct from each other — never pair similar shades (e.g. blue/marine/skyblue, or red/salmon/firebrick) in the same visualization. Prefer high-contrast combinations like red+blue, green+magenta, cyan+orange, yellow+purple. Never change the background color (bg_color) unless the user explicitly asks for it.
+
+When you execute visual commands (color, show/hide, represent, spectrum, util.cbc, util.ss, etc.), ALWAYS call the update_legend tool to describe what the visualization shows. Include all relevant color-to-meaning mappings.${structureCtx}
+
+IMPORTANT: The console command history below shows commands already executed in this session (both user-typed and AI-generated). Use this to understand the current state of the visualization — what's visible, hidden, colored, selected, etc. — so you can build on it rather than starting from scratch.${buildCommandLogContext(commandLog)}`;
 }
 
 // ---- Tool handlers ----
@@ -247,13 +304,18 @@ const MAX_TURNS = 10;
  * @param {Object[]} [history] - Conversation history array (mutated in place)
  * @returns {Promise<{commands: string[], message: string|null}>} Commands to execute and/or info message
  */
-export async function translateToCommands(userText, apiKey, interpreter, onProgress, history) {
+export async function translateToCommands(userText, apiKey, interpreter, onProgress, history, onLegendUpdate, commandLog) {
   const model = interpreter?.getModel() || null;
-  const systemPrompt = buildSystemPrompt(model);
+  const systemPrompt = buildSystemPrompt(model, commandLog);
 
   // Append user message to persistent history
   const messages = history || [];
   messages.push({ role: 'user', content: userText });
+
+  // Commands may appear in tool_use turns (e.g. alongside update_legend).
+  // Accumulate them so they aren't lost when the loop continues.
+  const CMD_KEYWORDS = /^(select|color|show|hide|represent|rep|zoom|center|orient|turn|reset|bg_color|count_atoms|delete|selections|ls|help|spectrum|set_color|set|util\.cbc|util\.chainbow|util\.ss|lines|as|bond|unbond|contacts|distance|get_distance)\b/i;
+  const accumulatedCommands = [];
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -309,6 +371,10 @@ export async function translateToCommands(userText, apiKey, interpreter, onProgr
           case 'evaluate_selection':
             result = handleEvaluateSelection(input.expression, interpreter);
             break;
+          case 'update_legend':
+            if (onLegendUpdate) onLegendUpdate(input);
+            result = { success: true };
+            break;
           default:
             result = { error: `Unknown tool: ${name}` };
         }
@@ -327,6 +393,19 @@ export async function translateToCommands(userText, apiKey, interpreter, onProgr
         });
       }
 
+      // Capture any commands from text blocks in this tool_use turn
+      // (e.g. AI outputs commands alongside an update_legend call)
+      const turnTextBlocks = content.filter(b => b.type === 'text');
+      if (turnTextBlocks.length > 0) {
+        const turnText = turnTextBlocks.map(b => b.text).join('\n');
+        const turnLines = turnText.split('\n')
+          .map(l => l.trim())
+          .filter(l => l && !l.startsWith('```'));
+        for (const l of turnLines) {
+          if (CMD_KEYWORDS.test(l)) accumulatedCommands.push(l);
+        }
+      }
+
       // Append tool results as a user message and continue the loop
       messages.push({ role: 'user', content: toolResults });
       continue;
@@ -334,21 +413,23 @@ export async function translateToCommands(userText, apiKey, interpreter, onProgr
 
     // stop_reason === 'end_turn' (or anything else): extract response
     const textBlocks = content.filter(b => b.type === 'text');
-    const text = textBlocks.map(b => b.text).join('\n');
-    const lines = text.split('\n')
+    const rawText = textBlocks.map(b => b.text).join('\n');
+    const lines = rawText.split('\n')
       .map(l => l.trim())
       .filter(l => l && !l.startsWith('```'));
 
-    // Detect if response is commands or informational text.
-    // Commands start with a known keyword; plain text does not.
-    const CMD_KEYWORDS = /^(select|color|show|hide|represent|rep|zoom|center|orient|turn|reset|bg_color|count_atoms|delete|selections|ls|help|spectrum|set_color|util\.cbc|util\.chainbow|util\.ss|lines|as)\b/i;
-    const isAllCommands = lines.length > 0 && lines.every(l => CMD_KEYWORDS.test(l));
+    const commandLines = [...accumulatedCommands, ...lines.filter(l => CMD_KEYWORDS.test(l))];
+    const textLines = lines.filter(l => !CMD_KEYWORDS.test(l));
 
-    if (isAllCommands) {
-      return { commands: lines, message: null };
+    if (commandLines.length > 0) {
+      // Execute commands; attach any surrounding text as a message
+      return {
+        commands: commandLines,
+        message: textLines.length > 0 ? textLines.join('\n') : null,
+      };
     }
-    // Informational response (or mixed) — show as message, don't execute
-    return { commands: [], message: lines.join('\n') };
+    // Purely informational response — preserve raw markdown
+    return { commands: [], message: rawText.trim() };
   }
 
   throw new Error('AI exceeded maximum tool-use turns');

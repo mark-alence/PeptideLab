@@ -5,7 +5,7 @@
 
 import { BaseRepresentation } from './BaseRepresentation.js';
 import { createAtomInstances, createBondInstances, updateAtomColors, updateBondColors } from '../atomRenderer.js';
-import { extractBaseScales, extractBaseBondScales, applyAtomVisibility, applyBondVisibility } from './visibilityHelpers.js';
+import { extractBaseScales, extractBaseBondTransforms, applyAtomVisibility, applyBondVisibility } from './visibilityHelpers.js';
 
 export class BallAndStickRepresentation extends BaseRepresentation {
   build() {
@@ -26,7 +26,10 @@ export class BallAndStickRepresentation extends BaseRepresentation {
     // Extract base scales for visibility toggling
     this.baseScales = extractBaseScales(this.atomMesh, model.atomCount);
     if (this.bondMesh) {
-      this.baseBondScales = extractBaseBondScales(this.bondMesh, this.bondMesh.count);
+      const bt = extractBaseBondTransforms(this.bondMesh, this.bondMesh.count);
+      this.baseBondScales = bt.scales;
+      this.baseBondPositions = bt.positions;
+      this.baseBondQuats = bt.quaternions;
     }
   }
 
@@ -37,10 +40,10 @@ export class BallAndStickRepresentation extends BaseRepresentation {
     }
   }
 
-  applyVisibility(atomVisible) {
-    applyAtomVisibility(this.atomMesh, atomVisible, this.baseScales);
+  applyVisibility(atomVisible, scaleMultipliers = null) {
+    applyAtomVisibility(this.atomMesh, atomVisible, this.baseScales, scaleMultipliers, this.model.positions);
     if (this.bondMesh && this.bonds && this.baseBondScales) {
-      applyBondVisibility(this.bondMesh, this.bonds, atomVisible, this.baseBondScales);
+      applyBondVisibility(this.bondMesh, this.bonds, atomVisible, this.baseBondScales, this.baseBondPositions, this.baseBondQuats, scaleMultipliers);
     }
   }
 }

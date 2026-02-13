@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { GRID_W, GRID_H } from './constants.js';
 import { GameEvents } from './ui.js';
@@ -51,30 +52,43 @@ cssRenderer.domElement.style.zIndex = '2';
 cssRenderer.domElement.style.pointerEvents = 'none';
 renderer.domElement.parentNode.appendChild(cssRenderer.domElement);
 
-// --- OrbitControls ---
-export const controls = new OrbitControls(camera3D, renderer.domElement);
-controls.target.set(cx, 0, cz);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.minDistance = 10;
-controls.maxDistance = 80;
-controls.maxPolarAngle = Math.PI / 2 - 0.05;
+// --- OrbitControls (builder mode) ---
+const orbitControls = new OrbitControls(camera3D, renderer.domElement);
+orbitControls.target.set(cx, 0, cz);
+orbitControls.enableDamping = true;
+orbitControls.dampingFactor = 0.08;
+orbitControls.minDistance = 10;
+orbitControls.maxDistance = 80;
+orbitControls.maxPolarAngle = Math.PI / 2 - 0.05;
 // Left click free for placement — orbit with right button
-controls.mouseButtons = {
+orbitControls.mouseButtons = {
   LEFT: null,                        // free for grid clicks
   MIDDLE: THREE.MOUSE.PAN,
   RIGHT: THREE.MOUSE.ROTATE,
 };
 // Touch: one-finger orbit, two-finger dolly+pan
-controls.touches = {
+orbitControls.touches = {
   ONE: THREE.TOUCH.ROTATE,
   TWO: THREE.TOUCH.DOLLY_PAN,
 };
-controls.update();
+orbitControls.update();
+
+// --- TrackballControls (viewer mode — infinite free rotation) ---
+const trackballControls = new TrackballControls(camera3D, renderer.domElement);
+trackballControls.rotateSpeed = 2.0;
+trackballControls.zoomSpeed = 1.2;
+trackballControls.panSpeed = 0.8;
+trackballControls.dynamicDampingFactor = 0.12;
+trackballControls.enabled = false;
+
+// Active controls reference (live ES module binding)
+export let controls = orbitControls;
 
 // --- Camera gesture events (fade UI during orbit/pan/zoom) ---
-controls.addEventListener('start', () => GameEvents.emit('cameraGestureStart'));
-controls.addEventListener('end', () => GameEvents.emit('cameraGestureEnd'));
+orbitControls.addEventListener('start', () => GameEvents.emit('cameraGestureStart'));
+orbitControls.addEventListener('end', () => GameEvents.emit('cameraGestureEnd'));
+trackballControls.addEventListener('start', () => GameEvents.emit('cameraGestureStart'));
+trackballControls.addEventListener('end', () => GameEvents.emit('cameraGestureEnd'));
 
 // --- Camera focus: smoothly animate target to a world position ---
 const defaultTarget = new THREE.Vector3(cx, 0, cz);
@@ -144,6 +158,7 @@ export function resize3D() {
   camera3D.updateProjectionMatrix();
   renderer.setSize(w, h);
   cssRenderer.setSize(w, h);
+  trackballControls.handleResize();
 }
 
 // --- Expose renderer canvas for raycasting ---
@@ -151,48 +166,38 @@ export function getCanvas() {
   return renderer.domElement;
 }
 
-// --- Viewer mode: reconfigure controls for free orbit ---
+// --- Viewer mode: switch to TrackballControls for infinite free rotation ---
 export function configureViewerControls() {
-  // Left-click orbits (no grid placement), middle pans, right also orbits
-  controls.mouseButtons = {
-    LEFT: THREE.MOUSE.ROTATE,
-    MIDDLE: THREE.MOUSE.PAN,
-    RIGHT: THREE.MOUSE.ROTATE,
-  };
-  controls.touches = {
-    ONE: THREE.TOUCH.ROTATE,
-    TWO: THREE.TOUCH.DOLLY_PAN,
-  };
-  // Remove polar angle limit — allow full rotation
-  controls.maxPolarAngle = Math.PI;
-  // Remove distance limits (viewer.js sets its own)
-  controls.minDistance = 0;
-  controls.maxDistance = Infinity;
-  controls.update();
+  orbitControls.enabled = false;
+
+  // Sync trackball target from orbit controls
+  trackballControls.target.copy(orbitControls.target);
+  trackballControls.minDistance = 0;
+  trackballControls.maxDistance = Infinity;
+  trackballControls.enabled = true;
+  trackballControls.handleResize();
+
+  controls = trackballControls;
 }
 
 // --- Restore builder mode controls ---
 export function configureBuilderControls() {
   const cx = GRID_W / 2;
   const cz = GRID_H / 2;
-  controls.mouseButtons = {
-    LEFT: null,
-    MIDDLE: THREE.MOUSE.PAN,
-    RIGHT: THREE.MOUSE.ROTATE,
-  };
-  controls.touches = {
-    ONE: THREE.TOUCH.ROTATE,
-    TWO: THREE.TOUCH.DOLLY_PAN,
-  };
-  controls.maxPolarAngle = Math.PI / 2 - 0.05;
-  controls.minDistance = 10;
-  controls.maxDistance = 80;
-  controls.target.set(cx, 0, cz);
+  trackballControls.enabled = false;
+
+  orbitControls.enabled = true;
+  orbitControls.maxPolarAngle = Math.PI / 2 - 0.05;
+  orbitControls.minDistance = 10;
+  orbitControls.maxDistance = 80;
+  orbitControls.target.set(cx, 0, cz);
   camera3D.position.set(cx, 25, cz + 30);
   camera3D.near = 0.1;
   camera3D.far = 500;
   camera3D.updateProjectionMatrix();
-  controls.update();
+  orbitControls.update();
+
+  controls = orbitControls;
 }
 
 // --- Scene background / fog / lighting control for viewer mode ---

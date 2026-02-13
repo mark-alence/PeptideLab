@@ -56,14 +56,25 @@ function tokenize(input) {
     if (ch === ')') { tokens.push({ type: T_RPAREN, value: ')' }); i++; continue; }
     if (ch === '+') { tokens.push({ type: T_PLUS, value: '+' }); i++; continue; }
     if (ch === '-') { tokens.push({ type: T_DASH, value: '-' }); i++; continue; }
-    // Number (integer or decimal)
+    // Number (integer or decimal) — but if digits are immediately followed by
+    // letters (e.g. "5CM", "3HP"), emit as a WORD token (common in PDB residue/ligand names)
     if (ch >= '0' && ch <= '9') {
       let num = '';
       while (i < input.length && input[i] >= '0' && input[i] <= '9') { num += input[i]; i++; }
       if (i < input.length && input[i] === '.') {
         num += input[i]; i++;
         while (i < input.length && input[i] >= '0' && input[i] <= '9') { num += input[i]; i++; }
-        tokens.push({ type: T_NUMBER, value: parseFloat(num) });
+        // Check for trailing letters (e.g. unlikely but handle 1.5X)
+        if (i < input.length && /[A-Za-z_]/.test(input[i])) {
+          while (i < input.length && /[A-Za-z0-9_*']/.test(input[i])) { num += input[i]; i++; }
+          tokens.push({ type: T_WORD, value: num });
+        } else {
+          tokens.push({ type: T_NUMBER, value: parseFloat(num) });
+        }
+      } else if (i < input.length && /[A-Za-z_]/.test(input[i])) {
+        // Digits followed by letters: treat as identifier (e.g. "5CM", "3HP")
+        while (i < input.length && /[A-Za-z0-9_*']/.test(input[i])) { num += input[i]; i++; }
+        tokens.push({ type: T_WORD, value: num });
       } else {
         tokens.push({ type: T_NUMBER, value: parseInt(num) });
       }
@@ -146,14 +157,37 @@ class Parser {
     return left;
   }
 
-  // and_expr = not_expr ("and" not_expr)*
+  // and_expr = not_expr (("and" | implicit) not_expr)*
+  // Implicit "and": when the next token can start a primary (a selector keyword,
+  // LPAREN, or "not"/"byres"/"within"/"around"/"neighbor"/"bound_to"),
+  // treat adjacent primaries as intersection — matching PyMOL behavior.
   parseAnd() {
     let left = this.parseNot();
-    while (this.matchWord('and')) {
-      const right = this.parseNot();
-      left = intersection(left, right);
+    while (true) {
+      if (this.matchWord('and')) {
+        left = intersection(left, this.parseNot());
+        continue;
+      }
+      // Check for implicit "and": next token can start a not_expr
+      const t = this.peek();
+      if (t.type === T_LPAREN || (t.type === T_WORD && this._canStartPrimary(t.value.toLowerCase()))) {
+        left = intersection(left, this.parseNot());
+        continue;
+      }
+      break;
     }
     return left;
+  }
+
+  // Check if a keyword can begin a primary expression (for implicit "and" detection)
+  _canStartPrimary(kw) {
+    return [
+      'not', 'byres', 'within', 'around', 'neighbor', 'bound_to',
+      'chain', 'resi', 'resn', 'name', 'elem', 'ss',
+      'hetatm', 'polymer', 'backbone', 'bb', 'sidechain', 'sc',
+      'organic', 'inorganic', 'solvent', 'water', 'hydrogens', 'h', 'metals',
+      'pepseq', 'b', 'index', 'id', 'all', 'none',
+    ].includes(kw);
   }
 
   // not_expr = "not" not_expr | primary
@@ -190,7 +224,11 @@ class Parser {
       this.advance();
       const distToken = this.expect(T_NUMBER);
       const distance = distToken.value;
-      if (!this.matchWord('of')) throw new Error(`Expected "of" after "${kw} <distance>"`);
+      // "of" is optional: "within 4.0 of chain A" and "within 4.0 chain A" both work
+      this.matchWord('of');
+      if (this.peek().type === T_EOF || this.peek().type === T_RPAREN) {
+        throw new Error(`${kw} ${distance} needs a target selection, e.g.: ${kw} ${distance} of chain A`);
+      }
       const targetSel = this.parsePrimary();
       const result = this.selectWithin(distance, targetSel);
       // "around" excludes the original selection; "within" includes it

@@ -18,6 +18,7 @@ import { SpacefillRepresentation } from './representations/SpacefillRepresentati
 import { StickRepresentation } from './representations/StickRepresentation.js';
 import { CartoonRepresentation } from './representations/CartoonRepresentation.js';
 import { LinesRepresentation } from './representations/LinesRepresentation.js';
+import { InteractionOverlay } from './representations/InteractionOverlay.js';
 
 const REP_CLASSES = {
   [REP_TYPES.BALL_AND_STICK]: BallAndStickRepresentation,
@@ -40,8 +41,9 @@ export class PDBViewer {
 
     this.model = null;
     this.bonds = null;
-    this.activeRep = null;
+    this.activeReps = new Map();
     this.currentRepType = REP_TYPES.BALL_AND_STICK;
+    this.atomRepType = null;
 
     // Legacy refs for compatibility (some code may still check these)
     this.atomMesh = null;
@@ -108,16 +110,17 @@ export class PDBViewer {
     const RepClass = REP_CLASSES[this.currentRepType];
     if (!RepClass) return;
 
-    this.activeRep = new RepClass(
+    const rep = new RepClass(
       this.model, this.bonds,
       { atom: this.atomMaterial, bond: this.bondMaterial },
       this.viewerGroup
     );
-    this.activeRep.build();
+    rep.build();
+    this.activeReps.set(this.currentRepType, rep);
 
     // Update legacy refs
-    this.atomMesh = this.activeRep.getAtomMesh();
-    this.bondMesh = this.activeRep.getBondMesh();
+    this.atomMesh = rep.getAtomMesh();
+    this.bondMesh = rep.getBondMesh();
   }
 
   /**
@@ -129,40 +132,65 @@ export class PDBViewer {
   setRepresentation(type) {
     if (!REP_CLASSES[type]) return;
     if (!this.model) return;
-    if (type === this.currentRepType && this.activeRep) return;
+    if (this.activeReps.size === 1 && this.activeReps.has(type)) return;
 
-    // Dispose old representation
-    if (this.activeRep) {
-      this.activeRep.dispose();
-      this.activeRep = null;
-    }
+    // Dispose all existing reps (global switch)
+    for (const rep of this.activeReps.values()) rep.dispose();
+    this.activeReps.clear();
 
     this.currentRepType = type;
 
+    // Assign all atoms to this rep type
+    if (this.atomRepType) this.atomRepType.fill(type);
+
     // Build new representation
     const RepClass = REP_CLASSES[type];
-    this.activeRep = new RepClass(
+    const rep = new RepClass(
       this.model, this.bonds,
       { atom: this.atomMaterial, bond: this.bondMaterial },
       this.viewerGroup
     );
-    this.activeRep.build();
+    rep.build();
+    this.activeReps.set(type, rep);
 
     // Update legacy refs
-    this.atomMesh = this.activeRep.getAtomMesh();
-    this.bondMesh = this.activeRep.getBondMesh();
+    this.atomMesh = rep.getAtomMesh();
+    this.bondMesh = rep.getBondMesh();
 
     // Reapply color and visibility state
     if (this.atomColors) {
-      this.activeRep.applyColors(this.atomColors);
+      rep.applyColors(this.atomColors);
     }
     if (this.atomVisible) {
-      this.activeRep.applyVisibility(this.atomVisible);
+      rep.applyVisibility(this.atomVisible, this.atomScale);
     }
 
-    // Update base scales from the new representation
-    this.baseScales = this.activeRep.getBaseScales();
-    this.baseBondScales = this.activeRep.getBaseBondScales();
+    // Update base transforms from the new representation
+    this.baseScales = rep.getBaseScales();
+    this.baseBondScales = rep.getBaseBondScales();
+    this.baseBondPositions = rep.getBaseBondPositions();
+    this.baseBondQuats = rep.getBaseBondQuats();
+  }
+
+  /**
+   * Assign specific atoms to a representation type (per-selection rep).
+   * Creates the representation if needed, syncs visibility.
+   *
+   * @param {string} repType - One of REP_TYPES values
+   * @param {Set<number>|number[]} indices - Atoms to assign
+   */
+  setRepresentationForAtoms(repType, indices) {
+    if (!this.model || !this.atomRepType) return;
+    if (!REP_CLASSES[repType]) return;
+
+    for (const i of indices) {
+      this.atomRepType[i] = repType;
+    }
+
+    this._ensureRep(repType);
+    this._cleanupUnusedReps();
+    this._syncRepVisibility();
+    this._updateCurrentRepType();
   }
 
   /**
@@ -198,10 +226,9 @@ export class PDBViewer {
     this.camera.far = dist * 10;
     this.camera.updateProjectionMatrix();
 
-    // Remove distance limits for free orbit
+    // Set distance limits for zoom
     this.controls.minDistance = 1;
     this.controls.maxDistance = dist * 5;
-    this.controls.maxPolarAngle = Math.PI;
     this.controls.update();
 
     // Set up cinematic lighting centered on the protein
@@ -237,6 +264,7 @@ export class PDBViewer {
    * Render one frame (post-processing or direct).
    */
   render() {
+    this.updateCameraAnimation();
     this.postProcessing.render();
   }
 
@@ -260,18 +288,100 @@ export class PDBViewer {
     // Visibility: 1 = visible, 0 = hidden
     this.atomVisible = new Uint8Array(n).fill(1);
 
-    // Extract base scales from the active representation
-    this.baseScales = this.activeRep ? this.activeRep.getBaseScales() : null;
-    this.baseBondScales = this.activeRep ? this.activeRep.getBaseBondScales() : null;
+    // Per-atom scale multipliers (default 1.0)
+    this.atomScale = new Float32Array(n).fill(1);
 
-    // Current representation mode and the radius scale used during mesh creation
-    this._radiusScale = 0.3; // matches createAtomInstances default
-    this._representation = 'sticks';
+    // Per-atom representation type
+    this.atomRepType = new Array(n).fill(this.currentRepType);
+
+    // Extract base scales from the active representation
+    const firstRep = this.activeReps.values().next().value || null;
+    this.baseScales = firstRep ? firstRep.getBaseScales() : null;
+    this.baseBondScales = firstRep ? firstRep.getBaseBondScales() : null;
 
     // Save initial camera state for reset
     this._initialCameraPos = this.camera.position.clone();
     this._initialTarget = this.controls.target.clone();
+
+    // Camera animation state
+    this._cameraAnim = null;
+
+    // Interaction overlay (contacts command)
+    this.interactionOverlay = new InteractionOverlay(this.model, this.viewerGroup);
   }
+
+  // ============================================================
+  // Camera animation
+  // ============================================================
+
+  /**
+   * Smoothly animate camera target (and optionally position) over time.
+   * @param {THREE.Vector3} newTarget
+   * @param {THREE.Vector3|null} newPosition - null keeps same offset from target
+   * @param {number} duration - ms
+   */
+  _animateCameraTo(newTarget, newPosition = null, duration = 350) {
+    this._cameraAnim = {
+      startTarget: this.controls.target.clone(),
+      endTarget: newTarget.clone(),
+      startPos: this.camera.position.clone(),
+      endPos: newPosition ? newPosition.clone() : null,
+      startTime: performance.now(),
+      duration,
+    };
+  }
+
+  /**
+   * Tick camera animation. Called each frame from render().
+   */
+  updateCameraAnimation() {
+    if (!this._cameraAnim) return;
+    const anim = this._cameraAnim;
+    const t = Math.min((performance.now() - anim.startTime) / anim.duration, 1);
+    const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // ease-in-out quad
+
+    this.controls.target.lerpVectors(anim.startTarget, anim.endTarget, ease);
+
+    if (anim.endPos) {
+      this.camera.position.lerpVectors(anim.startPos, anim.endPos, ease);
+    } else {
+      // Keep same offset — just shift orbit center
+      const offset = new THREE.Vector3().subVectors(anim.startPos, anim.startTarget);
+      this.camera.position.copy(this.controls.target).add(offset);
+    }
+
+    this.controls.update();
+    if (t >= 1) this._cameraAnim = null;
+  }
+
+  /**
+   * Recenter orbit target on the centroid of currently visible atoms.
+   * Preserves viewing angle, only shifts what you orbit around.
+   */
+  recenterOnVisible() {
+    if (!this.model || !this.atomVisible) return;
+    const { positions, atomCount } = this.model;
+    let sx = 0, sy = 0, sz = 0, count = 0;
+    for (let i = 0; i < atomCount; i++) {
+      if (this.atomVisible[i]) {
+        sx += positions[i * 3];
+        sy += positions[i * 3 + 1];
+        sz += positions[i * 3 + 2];
+        count++;
+      }
+    }
+    if (count === 0) return;
+    const newTarget = new THREE.Vector3(sx / count, sy / count, sz / count);
+
+    // Only animate if the shift is noticeable
+    if (newTarget.distanceTo(this.controls.target) > 0.5) {
+      this._animateCameraTo(newTarget, null, 300);
+    }
+  }
+
+  // ============================================================
+  // Atom coloring
+  // ============================================================
 
   /**
    * Color specific atoms by hex color value.
@@ -283,7 +393,7 @@ export class PDBViewer {
     for (const i of indices) {
       this.atomColors[i].copy(color);
     }
-    if (this.activeRep) this.activeRep.applyColors(this.atomColors);
+    for (const rep of this.activeReps.values()) rep.applyColors(this.atomColors);
   }
 
   /**
@@ -295,7 +405,7 @@ export class PDBViewer {
     for (const i of indices) {
       this.atomColors[i].setHex(ELEMENT_COLORS[atoms[i].element] || DEFAULT_COLOR);
     }
-    if (this.activeRep) this.activeRep.applyColors(this.atomColors);
+    for (const rep of this.activeReps.values()) rep.applyColors(this.atomColors);
   }
 
   /**
@@ -306,7 +416,7 @@ export class PDBViewer {
     for (let i = 0; i < atoms.length; i++) {
       this.atomColors[i].setHex(ELEMENT_COLORS[atoms[i].element] || DEFAULT_COLOR);
     }
-    if (this.activeRep) this.activeRep.applyColors(this.atomColors);
+    for (const rep of this.activeReps.values()) rep.applyColors(this.atomColors);
   }
 
   /**
@@ -317,7 +427,7 @@ export class PDBViewer {
     for (const i of indices) {
       this.atomVisible[i] = 0;
     }
-    if (this.activeRep) this.activeRep.applyVisibility(this.atomVisible);
+    this._syncRepVisibility();
   }
 
   /**
@@ -325,24 +435,40 @@ export class PDBViewer {
    * @param {Set<number>|number[]} indices
    */
   showAtoms(indices) {
-    const atomMul = this._representation === 'spheres' ? (1.0 / this._radiusScale)
-                  : this._representation === 'lines'   ? 0.35
-                  : 1.0;
     for (const i of indices) {
       this.atomVisible[i] = 1;
     }
-    if (this.activeRep) this.activeRep.applyVisibility(this.atomVisible);
+    this._syncRepVisibility();
+  }
+
+  /**
+   * Set per-atom scale multipliers for specific atoms.
+   * @param {Set<number>|number[]} indices
+   * @param {number} factor - Scale multiplier (e.g. 2.0 = double size)
+   */
+  scaleAtoms(indices, factor) {
+    if (!this.atomScale) return;
+    for (const i of indices) {
+      this.atomScale[i] = factor;
+    }
+    this._syncRepVisibility();
+  }
+
+  /**
+   * Reset all atom scale multipliers to 1.0.
+   */
+  resetScale() {
+    if (!this.atomScale) return;
+    this.atomScale.fill(1);
+    this._syncRepVisibility();
   }
 
   /**
    * Reset all atoms to visible.
    */
   resetVisibility() {
-    const atomMul = this._representation === 'spheres' ? (1.0 / this._radiusScale)
-                  : this._representation === 'lines'   ? 0.35
-                  : 1.0;
     this.atomVisible.fill(1);
-    if (this.activeRep) this.activeRep.applyVisibility(this.atomVisible);
+    this._syncRepVisibility();
   }
 
   /**
@@ -370,13 +496,12 @@ export class PDBViewer {
     const cz = (minZ + maxZ) / 2;
     const size = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 2);
 
-    this.controls.target.set(cx, cy, cz);
-
     const fov = this.camera.fov * (Math.PI / 180);
     const dist = (size / 2) / Math.tan(fov / 2) * 1.8;
-    this.camera.position.set(cx, cy, cz + dist);
-    this.camera.updateProjectionMatrix();
-    this.controls.update();
+    const newTarget = new THREE.Vector3(cx, cy, cz);
+    const newPos = new THREE.Vector3(cx, cy, cz + dist);
+
+    this._animateCameraTo(newTarget, newPos, 400);
   }
 
   /**
@@ -393,8 +518,8 @@ export class PDBViewer {
       count++;
     }
     if (count === 0) return;
-    this.controls.target.set(sx / count, sy / count, sz / count);
-    this.controls.update();
+    const newTarget = new THREE.Vector3(sx / count, sy / count, sz / count);
+    this._animateCameraTo(newTarget, null, 350);
   }
 
   /**
@@ -406,67 +531,11 @@ export class PDBViewer {
   }
 
   /**
-   * Switch atom/bond representation mode.
-   * @param {'spheres'|'sticks'|'lines'} mode
-   */
-  setRepresentation(mode) {
-    const n = this.model.atomCount;
-
-    // Atom scale multiplier relative to baseScales (which are VDW * 0.3)
-    // spheres: full VDW → multiply by 1/0.3 ≈ 3.33
-    // sticks:  ball-and-stick → 1.0 (default)
-    // lines:   tiny dots → 0.35
-    const atomMul = mode === 'spheres' ? (1.0 / this._radiusScale)
-                  : mode === 'lines'   ? 0.35
-                  : 1.0;
-
-    for (let i = 0; i < n; i++) {
-      if (this.atomVisible[i]) {
-        this._setAtomScale(i, this.baseScales[i] * atomMul);
-      }
-    }
-    this.atomMesh.instanceMatrix.needsUpdate = true;
-
-    // Bonds: hidden for spheres, thin for lines, normal for sticks
-    if (this.bondMesh && this.bonds) {
-      const bondCount = this.bonds.length / 2;
-      const _mat = new THREE.Matrix4();
-      const _scl = new THREE.Vector3();
-
-      for (let bi = 0; bi < bondCount; bi++) {
-        const ai = this.bonds[bi * 2];
-        const aj = this.bonds[bi * 2 + 1];
-        const atomsVisible = this.atomVisible[ai] && this.atomVisible[aj];
-
-        for (let half = 0; half < 2; half++) {
-          const idx = bi * 2 + half;
-
-          if (mode === 'spheres' || !atomsVisible) {
-            _scl.set(0, 0, 0);
-          } else if (mode === 'lines') {
-            const base = this.baseBondScales[idx];
-            _scl.set(base.x * 0.4, base.y, base.z * 0.4);
-          } else {
-            _scl.copy(this.baseBondScales[idx]);
-          }
-
-          // Recompose from stored base transform (avoids decompose on zero-scale)
-          _mat.compose(this.baseBondPositions[idx], this.baseBondQuats[idx], _scl);
-          this.bondMesh.setMatrixAt(idx, _mat);
-        }
-      }
-      this.bondMesh.instanceMatrix.needsUpdate = true;
-    }
-
-    this._representation = mode;
-  }
-
-  /**
-   * Get current representation mode.
-   * @returns {'spheres'|'sticks'|'lines'}
+   * Get current representation type.
+   * @returns {string} One of REP_TYPES values
    */
   getRepresentation() {
-    return this._representation;
+    return this.currentRepType;
   }
 
   /**
@@ -515,10 +584,9 @@ export class PDBViewer {
     const fov = this.camera.fov * (Math.PI / 180);
     const dist = (size / 2) / Math.tan(fov / 2) * 1.8;
 
-    this.controls.target.set(cx, cy, cz);
-    this.camera.position.set(cx + v.x * dist, cy + v.y * dist, cz + v.z * dist);
-    this.camera.updateProjectionMatrix();
-    this.controls.update();
+    const newTarget = new THREE.Vector3(cx, cy, cz);
+    const newPos = new THREE.Vector3(cx + v.x * dist, cy + v.y * dist, cz + v.z * dist);
+    this._animateCameraTo(newTarget, newPos, 400);
   }
 
   /**
@@ -541,47 +609,189 @@ export class PDBViewer {
   }
 
   /**
+   * Add new bonds and rebuild representations.
+   * @param {Uint32Array} newBonds - Flat pairs [a0,b0, a1,b1, ...] to add
+   * @returns {number} Number of bonds actually added (deduped)
+   */
+  addBonds(newBonds) {
+    if (!this.model || !this.bonds) return 0;
+    const n = this.model.atoms.length;
+
+    // Build set of existing bond keys
+    const existing = new Set();
+    for (let i = 0; i < this.bonds.length; i += 2) {
+      const a = Math.min(this.bonds[i], this.bonds[i + 1]);
+      const b = Math.max(this.bonds[i], this.bonds[i + 1]);
+      existing.add(a * n + b);
+    }
+
+    // Filter to genuinely new bonds
+    const toAdd = [];
+    for (let i = 0; i < newBonds.length; i += 2) {
+      const a = Math.min(newBonds[i], newBonds[i + 1]);
+      const b = Math.max(newBonds[i], newBonds[i + 1]);
+      const key = a * n + b;
+      if (!existing.has(key)) {
+        existing.add(key);
+        toAdd.push(a, b);
+      }
+    }
+
+    if (toAdd.length === 0) return 0;
+
+    // Merge into bonds array
+    const merged = new Uint32Array(this.bonds.length + toAdd.length);
+    merged.set(this.bonds);
+    merged.set(toAdd, this.bonds.length);
+    this.bonds = merged;
+
+    this._rebuildReps();
+    return toAdd.length / 2;
+  }
+
+  /**
+   * Remove bonds between two selections and rebuild representations.
+   * Removes any bond where one endpoint is in sel1 and the other in sel2.
+   * @param {Set<number>} sel1
+   * @param {Set<number>} sel2
+   * @returns {number} Number of bonds removed
+   */
+  removeBonds(sel1, sel2) {
+    if (!this.model || !this.bonds) return 0;
+
+    const kept = [];
+    let removed = 0;
+    for (let i = 0; i < this.bonds.length; i += 2) {
+      const a = this.bonds[i], b = this.bonds[i + 1];
+      const crosses = (sel1.has(a) && sel2.has(b)) || (sel1.has(b) && sel2.has(a));
+      if (crosses) {
+        removed++;
+      } else {
+        kept.push(a, b);
+      }
+    }
+
+    if (removed === 0) return 0;
+
+    this.bonds = new Uint32Array(kept);
+    this._rebuildReps();
+    return removed;
+  }
+
+  /**
+   * Rebuild all active representations (after bond array changes).
+   * Preserves colors and visibility.
+   */
+  _rebuildReps() {
+    const savedColors = this.atomColors;
+    const savedVisible = this.atomVisible;
+    const savedRepTypes = this.atomRepType;
+
+    // Rebuild each active rep
+    const activeTypes = [...this.activeReps.keys()];
+    for (const rep of this.activeReps.values()) rep.dispose();
+    this.activeReps.clear();
+
+    for (const repType of activeTypes) {
+      const RepClass = REP_CLASSES[repType];
+      if (!RepClass) continue;
+      const rep = new RepClass(
+        this.model, this.bonds,
+        { atom: this.atomMaterial, bond: this.bondMaterial },
+        this.viewerGroup
+      );
+      rep.build();
+      this.activeReps.set(repType, rep);
+    }
+
+    // Restore state
+    this.atomColors = savedColors;
+    this.atomVisible = savedVisible;
+    this.atomRepType = savedRepTypes;
+
+    for (const rep of this.activeReps.values()) {
+      if (savedColors) rep.applyColors(savedColors);
+    }
+    if (savedVisible) this._syncRepVisibility();
+
+    // Update legacy refs
+    if (this.activeReps.size === 1) {
+      const rep = this.activeReps.values().next().value;
+      this.atomMesh = rep.getAtomMesh();
+      this.bondMesh = rep.getBondMesh();
+    }
+  }
+
+  /**
    * Reset colors, visibility, camera, and background.
    */
   resetAll() {
     this.resetColors();
     this.resetVisibility();
-    this.setRepresentation('sticks');
+    this.resetScale();
+    this.clearAllInteractions();
+    this.setRepresentation(REP_TYPES.BALL_AND_STICK);
     if (this._initialCameraPos) {
-      this.camera.position.copy(this._initialCameraPos);
-      this.controls.target.copy(this._initialTarget);
-      this.camera.updateProjectionMatrix();
-      this.controls.update();
+      this._animateCameraTo(this._initialTarget, this._initialCameraPos, 400);
     }
     if (this.backgroundTexture) {
       this.scene.background = this.backgroundTexture;
     }
   }
 
-  // ---- Private helpers ----
+  // ============================================================
+  // Interaction overlay (contacts)
+  // ============================================================
 
   /**
-   * Set instance scale for a single atom.
-   * Uses model.positions directly (atoms have identity quaternion)
-   * to avoid decompose failures on zero-scale matrices.
+   * Add interaction pairs as a dashed-line overlay layer.
+   * @param {string} type - Interaction type (e.g. INTERACTION_TYPES.HBONDS)
+   * @param {{ a: number, b: number, distance: number }[]} pairs
    */
-  _setAtomScale(i, s) {
-    const _mat = new THREE.Matrix4();
-    const _pos = new THREE.Vector3();
-    const _quat = new THREE.Quaternion(); // identity
-    const _scl = new THREE.Vector3(s, s, s);
-    const p = this.model.positions;
-    _pos.set(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
-    _mat.compose(_pos, _quat, _scl);
-    this.atomMesh.setMatrixAt(i, _mat);
+  addInteractions(type, pairs) {
+    if (!this.interactionOverlay) return;
+    this.interactionOverlay.addLayer(type, pairs);
+    // Apply current visibility so hidden atoms are respected
+    if (this.atomVisible) {
+      this.interactionOverlay.applyVisibility(this.atomVisible);
+    }
   }
+
+  /**
+   * Remove a specific interaction layer.
+   * @param {string} type
+   */
+  removeInteractions(type) {
+    if (!this.interactionOverlay) return;
+    this.interactionOverlay.removeLayer(type);
+  }
+
+  /**
+   * Remove all interaction layers.
+   */
+  clearAllInteractions() {
+    if (!this.interactionOverlay) return;
+    this.interactionOverlay.removeAll();
+  }
+
+  /**
+   * Get interaction pairs for a given type from the overlay.
+   * @param {string} type - Interaction type
+   * @returns {{ a: number, b: number, distance: number }[] | null}
+   */
+  getInteractionPairs(type) {
+    if (!this.interactionOverlay) return null;
+    return this.interactionOverlay.getLayerPairs(type);
+  }
+
+  // ---- Private helpers ----
 
   /**
    * Apply atomColors array to the atom InstancedMesh.
    */
   _applyAtomColors() {
-    if (this.activeRep) {
-      this.activeRep.applyColors(this.atomColors);
+    for (const rep of this.activeReps.values()) {
+      rep.applyColors(this.atomColors);
     }
   }
 
@@ -589,8 +799,8 @@ export class PDBViewer {
    * Update bond colors to match current atom colors.
    */
   _updateBondColors() {
-    if (this.activeRep && this.activeRep.applyBondColors) {
-      this.activeRep.applyBondColors(this.atomColors, this.bonds);
+    for (const rep of this.activeReps.values()) {
+      if (rep.applyBondColors) rep.applyBondColors(this.atomColors, this.bonds);
     }
   }
 
@@ -598,8 +808,82 @@ export class PDBViewer {
    * Hide bonds where either atom is hidden (scale to zero).
    */
   _updateBondVisibility() {
-    if (this.activeRep) {
-      this.activeRep.applyVisibility(this.atomVisible);
+    this._syncRepVisibility();
+  }
+
+  /**
+   * Sync visibility across all active reps based on atomRepType and atomVisible.
+   */
+  _syncRepVisibility() {
+    if (!this.atomVisible || !this.atomRepType) return;
+    const n = this.model.atomCount;
+    const combined = new Uint8Array(n);
+
+    for (const [repType, rep] of this.activeReps) {
+      for (let i = 0; i < n; i++) {
+        combined[i] = (this.atomRepType[i] === repType && this.atomVisible[i]) ? 1 : 0;
+      }
+      rep.applyVisibility(combined, this.atomScale);
+    }
+
+    // Sync interaction overlay visibility with atom visibility
+    if (this.interactionOverlay && this.interactionOverlay.hasLayers()) {
+      this.interactionOverlay.applyVisibility(this.atomVisible);
+    }
+  }
+
+  /**
+   * Remove reps that have no atoms assigned.
+   */
+  _cleanupUnusedReps() {
+    if (!this.atomRepType) return;
+    const usedTypes = new Set(this.atomRepType);
+    for (const [repType, rep] of this.activeReps) {
+      if (!usedTypes.has(repType)) {
+        rep.dispose();
+        this.activeReps.delete(repType);
+      }
+    }
+  }
+
+  /**
+   * Create a rep if not already active.
+   */
+  _ensureRep(repType) {
+    if (this.activeReps.has(repType)) return this.activeReps.get(repType);
+    const RepClass = REP_CLASSES[repType];
+    if (!RepClass) return null;
+    const rep = new RepClass(
+      this.model, this.bonds,
+      { atom: this.atomMaterial, bond: this.bondMaterial },
+      this.viewerGroup
+    );
+    rep.build();
+    if (this.atomColors) rep.applyColors(this.atomColors);
+    this.activeReps.set(repType, rep);
+    return rep;
+  }
+
+  /**
+   * Update currentRepType based on atom assignments.
+   * Sets to null when multiple rep types are active (mixed mode).
+   */
+  _updateCurrentRepType() {
+    if (!this.atomRepType) return;
+    const types = new Set(this.atomRepType);
+    if (types.size === 1) {
+      this.currentRepType = types.values().next().value;
+    } else {
+      this.currentRepType = null;
+    }
+    // Update legacy refs
+    if (this.activeReps.size === 1) {
+      const rep = this.activeReps.values().next().value;
+      this.atomMesh = rep.getAtomMesh();
+      this.bondMesh = rep.getBondMesh();
+    } else {
+      this.atomMesh = null;
+      this.bondMesh = null;
     }
   }
 
@@ -607,9 +891,11 @@ export class PDBViewer {
    * Remove current structure meshes from the scene.
    */
   clearStructure() {
-    if (this.activeRep) {
-      this.activeRep.dispose();
-      this.activeRep = null;
+    for (const rep of this.activeReps.values()) rep.dispose();
+    this.activeReps.clear();
+    if (this.interactionOverlay) {
+      this.interactionOverlay.dispose();
+      this.interactionOverlay = null;
     }
     this.atomMesh = null;
     this.bondMesh = null;
@@ -617,6 +903,8 @@ export class PDBViewer {
     this.bonds = null;
     this.atomColors = null;
     this.atomVisible = null;
+    this.atomScale = null;
+    this.atomRepType = null;
     this.baseScales = null;
     this.baseBondScales = null;
     this.baseBondPositions = null;

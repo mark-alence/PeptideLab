@@ -27,7 +27,7 @@ export class SpacefillRepresentation extends BaseRepresentation {
     updateAtomColors(this.atomMesh, atomColors);
   }
 
-  applyVisibility(atomVisible) {
-    applyAtomVisibility(this.atomMesh, atomVisible, this.baseScales);
+  applyVisibility(atomVisible, scaleMultipliers = null) {
+    applyAtomVisibility(this.atomMesh, atomVisible, this.baseScales, scaleMultipliers, this.model.positions);
   }
 }

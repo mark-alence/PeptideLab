@@ -146,10 +146,12 @@ export function createBondInstances(model, bonds, material, bondRadius = 0.1) {
  * Used by color scheme switching.
  */
 export function updateAtomColors(mesh, colors) {
-  for (let i = 0; i < colors.length; i++) {
+  const n = Math.min(colors.length, mesh.count);
+  for (let i = 0; i < n; i++) {
     mesh.setColorAt(i, colors[i]);
   }
   mesh.instanceColor.needsUpdate = true;
+  mesh.instanceMatrix.needsUpdate = true;
 }
 
 /**
@@ -162,6 +164,7 @@ export function updateBondColors(mesh, bonds, atomColors) {
     mesh.setColorAt(bi * 2 + 1, atomColors[bonds[bi * 2 + 1]]);
   }
   mesh.instanceColor.needsUpdate = true;
+  mesh.instanceMatrix.needsUpdate = true;
 }
 
 // Re-export for use by color schemes

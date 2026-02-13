@@ -105,7 +105,7 @@ export class LinesRepresentation extends BaseRepresentation {
     colorAttr.needsUpdate = true;
   }
 
-  applyVisibility(atomVisible) {
+  applyVisibility(atomVisible, scaleMultipliers = null) {
     if (!this._lineSegments) return;
     const posAttr = this._lineSegments.geometry.attributes.position;
     const bondCount = this._bondAtoms.length / 2;

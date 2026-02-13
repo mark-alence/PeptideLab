@@ -24,6 +24,8 @@ export class BaseRepresentation {
     this.bondMesh = null; // Primary bond InstancedMesh (if any)
     this.baseScales = null;
     this.baseBondScales = null;
+    this.baseBondPositions = null;
+    this.baseBondQuats = null;
   }
 
   /** Build meshes and add to viewerGroup. */
@@ -42,8 +44,9 @@ export class BaseRepresentation {
   /**
    * Apply per-atom visibility.
    * @param {Uint8Array} atomVisible
+   * @param {Float32Array|null} [scaleMultipliers=null] - Per-atom scale multipliers
    */
-  applyVisibility(atomVisible) {
+  applyVisibility(atomVisible, scaleMultipliers = null) {
     throw new Error('applyVisibility() must be implemented by subclass');
   }
 
@@ -59,6 +62,12 @@ export class BaseRepresentation {
   /** @returns {THREE.Vector3[]|null} */
   getBaseBondScales() { return this.baseBondScales; }
 
+  /** @returns {THREE.Vector3[]|null} */
+  getBaseBondPositions() { return this.baseBondPositions; }
+
+  /** @returns {THREE.Quaternion[]|null} */
+  getBaseBondQuats() { return this.baseBondQuats; }
+
   /** Dispose all meshes and remove from viewerGroup. */
   dispose() {
     for (const mesh of this.meshes) {
@@ -71,5 +80,7 @@ export class BaseRepresentation {
     this.bondMesh = null;
     this.baseScales = null;
     this.baseBondScales = null;
+    this.baseBondPositions = null;
+    this.baseBondQuats = null;
   }
 }

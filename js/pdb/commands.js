@@ -4,8 +4,10 @@
 // ============================================================
 
 import { parseSelection, createSelectionStore } from './selection.js';
+import { findBondsBetween } from './bondInference.js';
 import { REP_TYPES } from './constants.js';
 import { SS_HELIX, SS_SHEET } from './parser.js';
+import { INTERACTION_TYPES, detectHBonds, detectSaltBridges, detectCovalent, detectDistance } from './interactionDetector.js';
 
 // Callback for notifying UI when representation changes from console
 let _onRepChanged = null;
@@ -28,6 +30,32 @@ const REP_ALIASES = {
   line:           REP_TYPES.LINES,
   wireframe:      REP_TYPES.LINES,
   wire:           REP_TYPES.LINES,
+};
+
+// All PyMOL representation names (including unsupported ones) so show/hide
+// can recognize and strip them rather than passing them to the selection parser
+const ALL_REP_NAMES = new Set([
+  ...Object.keys(REP_ALIASES),
+  'lines', 'dots', 'mesh', 'surface', 'nb_spheres', 'cell',
+  'nonbonded', 'wire', 'everything', 'label', 'extent',
+  'slice', 'dashes', 'putty',
+]);
+
+// Interaction type aliases (command name -> INTERACTION_TYPES value)
+const CONTACT_TYPE_ALIASES = {
+  hbond:        INTERACTION_TYPES.HBONDS,
+  hbonds:       INTERACTION_TYPES.HBONDS,
+  hydrogen:     INTERACTION_TYPES.HBONDS,
+  h_bonds:      INTERACTION_TYPES.HBONDS,
+  salt:         INTERACTION_TYPES.SALT_BRIDGES,
+  saltbridge:   INTERACTION_TYPES.SALT_BRIDGES,
+  saltbridges:  INTERACTION_TYPES.SALT_BRIDGES,
+  salt_bridge:  INTERACTION_TYPES.SALT_BRIDGES,
+  salt_bridges: INTERACTION_TYPES.SALT_BRIDGES,
+  covalent:     INTERACTION_TYPES.COVALENT,
+  cov:          INTERACTION_TYPES.COVALENT,
+  distance:     INTERACTION_TYPES.DISTANCE,
+  dist:         INTERACTION_TYPES.DISTANCE,
 };
 
 // ---- Color interpolation for spectrum command ----
@@ -118,6 +146,12 @@ export function createCommandInterpreter(viewer) {
     return viewer.bonds;
   }
 
+  /** Format an atom index as RES:SEQ:NAME label */
+  function atomLabel(model, idx) {
+    const a = model.atoms[idx];
+    return `${a.resName}:${a.resSeq}:${a.name}`;
+  }
+
   function sel(str) {
     const model = getModel();
     if (!model) throw new Error('No structure loaded');
@@ -186,16 +220,74 @@ export function createCommandInterpreter(viewer) {
     show(args) {
       const model = getModel();
       if (!model) return 'No structure loaded';
-      const indices = args ? sel(args) : sel('all');
+      // Handle PyMOL-style "show <representation>, <selection>"
+      let repName = null, selStr = args;
+      if (args) {
+        const [first, rest] = splitComma(args);
+        if (ALL_REP_NAMES.has(first.toLowerCase())) {
+          repName = first.toLowerCase();
+          selStr = rest || '';
+        }
+      }
+      const indices = selStr ? sel(selStr) : sel('all');
+      if (repName) {
+        const repType = REP_ALIASES[repName];
+        if (repType) {
+          // Mark atoms visible without intermediate sync —
+          // setRepresentationForAtoms will do the definitive sync
+          for (const i of indices) viewer.atomVisible[i] = 1;
+          viewer.setRepresentationForAtoms(repType, indices);
+          if (_onRepChanged) _onRepChanged(viewer.getRepresentation());
+          return `Showing ${indices.size} atoms as ${repName}`;
+        }
+      }
       viewer.showAtoms(indices);
+      viewer.recenterOnVisible();
       return `Showing ${indices.size} atoms`;
     },
 
     hide(args) {
       const model = getModel();
       if (!model) return 'No structure loaded';
-      const indices = args ? sel(args) : sel('all');
+      // Handle PyMOL-style "hide <representation>, <selection>"
+      let repName = null, selStr = args;
+      if (args) {
+        const [first, rest] = splitComma(args);
+        if (ALL_REP_NAMES.has(first.toLowerCase())) {
+          repName = first.toLowerCase();
+          selStr = rest || '';
+        }
+      }
+
+      // "hide everything" — hide all atoms (PyMOL: hide all representations)
+      if (repName === 'everything') {
+        const indices = selStr ? sel(selStr) : sel('all');
+        viewer.hideAtoms(indices);
+        viewer.recenterOnVisible();
+        return `Hid ${indices.size} atoms`;
+      }
+
+      if (repName && !selStr) {
+        // "hide lines" / "hide cartoon" with no selection:
+        // only hide atoms currently shown in that representation
+        const repType = REP_ALIASES[repName];
+        if (repType && viewer.atomRepType) {
+          const indices = new Set();
+          for (let i = 0; i < viewer.atomRepType.length; i++) {
+            if (viewer.atomRepType[i] === repType) indices.add(i);
+          }
+          if (indices.size === 0) return `No atoms currently shown as ${repName}`;
+          viewer.hideAtoms(indices);
+          viewer.recenterOnVisible();
+          return `Hid ${indices.size} atoms shown as ${repName}`;
+        }
+        // Unrecognized rep alias (e.g. "dots", "mesh") — no-op
+        return `Representation "${repName}" not supported`;
+      }
+
+      const indices = selStr ? sel(selStr) : sel('all');
       viewer.hideAtoms(indices);
+      viewer.recenterOnVisible();
       return `Hid ${indices.size} atoms`;
     },
 
@@ -218,12 +310,20 @@ export function createCommandInterpreter(viewer) {
     },
 
     represent(args) {
-      const mode = (args || '').trim().toLowerCase();
-      const valid = ['spheres', 'sticks', 'lines'];
-      if (!valid.includes(mode)) {
-        return `Usage: represent <${valid.join('|')}>\n  Current: ${viewer.getRepresentation()}`;
+      if (!args) {
+        const available = Object.keys(REP_ALIASES).join(', ');
+        return `Usage: represent <name>\n  Current: ${viewer.getRepresentation()}\n  Available: ${available}`;
       }
-      viewer.setRepresentation(mode);
+      // Handle PyMOL-style "represent <mode>" — global representation switch
+      const [modeName] = splitComma(args);
+      const mode = modeName.trim().toLowerCase();
+      const repType = REP_ALIASES[mode];
+      if (!repType) {
+        const available = Object.keys(REP_ALIASES).join(', ');
+        return `Usage: represent <name>\n  Current: ${viewer.getRepresentation()}\n  Available: ${available}`;
+      }
+      viewer.setRepresentation(repType);
+      if (_onRepChanged) _onRepChanged(repType);
       return `Representation set to ${mode}`;
     },
 
@@ -235,7 +335,7 @@ export function createCommandInterpreter(viewer) {
     reset() {
       viewer.resetAll();
       namedSelections.clear();
-      return 'Reset colors, visibility, camera, and selections';
+      return 'Reset colors, visibility, scale, camera, contacts, and selections';
     },
 
     bg_color(args) {
@@ -323,6 +423,223 @@ export function createCommandInterpreter(viewer) {
       viewer.setRepresentation(repType);
       if (_onRepChanged) _onRepChanged(repType);
       return `Switched to ${repName} representation`;
+    },
+
+    bond(args) {
+      // bond <sel1>, <sel2>[, <cutoff>]
+      const model = getModel();
+      if (!model) return 'No structure loaded';
+      if (!args) return 'Usage: bond <sel1>, <sel2>[, <cutoff>]\n  Detect and show bonds between two selections.\n  cutoff: distance in Angstroms (default: covalent radii)';
+
+      const parts = args.split(',').map(s => s.trim());
+      if (parts.length < 2) return 'Usage: bond <sel1>, <sel2>[, <cutoff>]';
+
+      const sel1 = sel(parts[0]);
+      const sel2 = sel(parts[1]);
+      const cutoff = parts[2] ? parseFloat(parts[2]) : null;
+
+      if (sel1.size === 0) return 'First selection matched 0 atoms';
+      if (sel2.size === 0) return 'Second selection matched 0 atoms';
+      if (cutoff !== null && (isNaN(cutoff) || cutoff <= 0)) return 'Cutoff must be a positive number';
+
+      const newBonds = findBondsBetween(model, sel1, sel2, cutoff);
+      if (newBonds.length === 0) {
+        const method = cutoff ? `${cutoff} A cutoff` : 'covalent radii';
+        return `No bonds found between selections (${method})`;
+      }
+
+      const added = viewer.addBonds(newBonds);
+      const method = cutoff ? `${cutoff} A cutoff` : 'covalent radii';
+      return `Added ${added} bond${added !== 1 ? 's' : ''} between selections (${method})`;
+    },
+
+    unbond(args) {
+      // unbond <sel1>, <sel2>
+      const model = getModel();
+      if (!model) return 'No structure loaded';
+      if (!args) return 'Usage: unbond <sel1>, <sel2>\n  Remove bonds between two selections.';
+
+      const parts = args.split(',').map(s => s.trim());
+      if (parts.length < 2) return 'Usage: unbond <sel1>, <sel2>';
+
+      const sel1 = sel(parts[0]);
+      const sel2 = sel(parts[1]);
+
+      if (sel1.size === 0) return 'First selection matched 0 atoms';
+      if (sel2.size === 0) return 'Second selection matched 0 atoms';
+
+      const removed = viewer.removeBonds(sel1, sel2);
+      if (removed === 0) return 'No bonds found between selections to remove';
+      return `Removed ${removed} bond${removed !== 1 ? 's' : ''} between selections`;
+    },
+
+    contacts(args) {
+      const model = getModel();
+      if (!model) return 'No structure loaded';
+      if (!args) return 'Usage: contacts <type>, <sel1>, <sel2>[, <cutoff>]\n  contacts list [<type>]\n  contacts clear [<type>]\n  Types: hbonds, salt_bridges, covalent, distance';
+
+      const trimmed = args.trim().toLowerCase();
+
+      // Handle "contacts clear [type]"
+      if (trimmed === 'clear') {
+        viewer.clearAllInteractions();
+        return 'Cleared all interaction overlays';
+      }
+      if (trimmed.startsWith('clear')) {
+        const rest = args.trim().substring(5).trim();
+        const typeName = rest.toLowerCase();
+        const type = CONTACT_TYPE_ALIASES[typeName];
+        if (!type) return `Unknown interaction type: "${rest}". Types: hbonds, salt_bridges, covalent, distance`;
+        viewer.removeInteractions(type);
+        return `Cleared ${type} overlay`;
+      }
+
+      // Handle "contacts list [type]"
+      if (trimmed === 'list' || trimmed.startsWith('list ') || trimmed.startsWith('list,')) {
+        const rest = trimmed.substring(4).replace(/^[\s,]+/, '');
+        if (!rest) {
+          // List all active layers
+          const overlay = viewer.interactionOverlay;
+          if (!overlay || !overlay.hasLayers()) return 'No active interaction overlays';
+          const lines = [];
+          for (const info of overlay.getLayerInfo()) {
+            const pairs = viewer.getInteractionPairs(info.type);
+            if (!pairs || pairs.length === 0) continue;
+            lines.push(`${info.type} (${pairs.length} pairs):`);
+            const sorted = [...pairs].sort((a, b) => a.distance - b.distance);
+            const cap = Math.min(sorted.length, 50);
+            for (let k = 0; k < cap; k++) {
+              const p = sorted[k];
+              lines.push(`  ${atomLabel(model, p.a)} \u2014 ${atomLabel(model, p.b)}   ${p.distance.toFixed(2)} A`);
+            }
+            if (sorted.length > 50) lines.push(`  ... and ${sorted.length - 50} more`);
+          }
+          return lines.length > 0 ? lines.join('\n') : 'No interaction pairs found';
+        }
+        // List specific type
+        const typeName = rest.toLowerCase();
+        const type = CONTACT_TYPE_ALIASES[typeName];
+        if (!type) return `Unknown interaction type: "${rest}". Types: hbonds, salt_bridges, covalent, distance`;
+        const pairs = viewer.getInteractionPairs(type);
+        if (!pairs || pairs.length === 0) return `No ${type} pairs found (run "contacts ${typeName}, <sel1>, <sel2>" first)`;
+        const sorted = [...pairs].sort((a, b) => a.distance - b.distance);
+        const lines = [`${type} (${sorted.length} pairs):`];
+        const cap = Math.min(sorted.length, 50);
+        for (let k = 0; k < cap; k++) {
+          const p = sorted[k];
+          lines.push(`  ${atomLabel(model, p.a)} \u2014 ${atomLabel(model, p.b)}   ${p.distance.toFixed(2)} A`);
+        }
+        if (sorted.length > 50) lines.push(`  ... and ${sorted.length - 50} more`);
+        return lines.join('\n');
+      }
+
+      // Parse: <type>, <sel1>, <sel2>[, <cutoff>]
+      const parts = args.split(',').map(s => s.trim());
+      if (parts.length < 3) return 'Usage: contacts <type>, <sel1>, <sel2>[, <cutoff>]';
+
+      const typeName = parts[0].toLowerCase();
+      const type = CONTACT_TYPE_ALIASES[typeName];
+      if (!type) return `Unknown interaction type: "${parts[0]}". Types: hbonds, salt_bridges, covalent, distance`;
+
+      const sel1 = sel(parts[1]);
+      const sel2 = sel(parts[2]);
+      const cutoffStr = parts[3] ? parts[3].trim() : null;
+
+      if (sel1.size === 0) return 'First selection matched 0 atoms';
+      if (sel2.size === 0) return 'Second selection matched 0 atoms';
+
+      // Distance type requires a cutoff
+      if (type === INTERACTION_TYPES.DISTANCE && !cutoffStr) {
+        return 'Distance contacts require a cutoff: contacts distance, <sel1>, <sel2>, <cutoff>';
+      }
+
+      const cutoff = cutoffStr ? parseFloat(cutoffStr) : null;
+      if (cutoff !== null && (isNaN(cutoff) || cutoff <= 0)) return 'Cutoff must be a positive number';
+
+      let pairs;
+      switch (type) {
+        case INTERACTION_TYPES.HBONDS:
+          pairs = detectHBonds(model, getBonds(), sel1, sel2, cutoff || undefined);
+          break;
+        case INTERACTION_TYPES.SALT_BRIDGES:
+          pairs = detectSaltBridges(model, sel1, sel2, cutoff || undefined);
+          break;
+        case INTERACTION_TYPES.COVALENT:
+          pairs = detectCovalent(model, sel1, sel2);
+          break;
+        case INTERACTION_TYPES.DISTANCE:
+          pairs = detectDistance(model, sel1, sel2, cutoff);
+          break;
+        default:
+          return `Unsupported interaction type: ${type}`;
+      }
+
+      if (pairs.length === 0) {
+        return `No ${type} found between selections`;
+      }
+
+      viewer.addInteractions(type, pairs);
+      return `Found ${pairs.length} ${type} between selections`;
+    },
+
+    distance(args) {
+      const model = getModel();
+      if (!model) return 'No structure loaded';
+      if (!args) return 'Usage: distance <sel1>, <sel2>\n  Measure distance between two selections.';
+
+      const parts = args.split(',').map(s => s.trim());
+      if (parts.length < 2) return 'Usage: distance <sel1>, <sel2>';
+
+      const sel1 = sel(parts[0]);
+      const sel2 = sel(parts[1]);
+
+      if (sel1.size === 0) return 'First selection matched 0 atoms';
+      if (sel2.size === 0) return 'Second selection matched 0 atoms';
+
+      const { positions } = model;
+
+      let bestI, bestJ, dist;
+
+      // Single atom in each selection — report direct distance
+      if (sel1.size === 1 && sel2.size === 1) {
+        bestI = sel1.values().next().value;
+        bestJ = sel2.values().next().value;
+        const dx = positions[bestI * 3] - positions[bestJ * 3];
+        const dy = positions[bestI * 3 + 1] - positions[bestJ * 3 + 1];
+        const dz = positions[bestI * 3 + 2] - positions[bestJ * 3 + 2];
+        dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      } else {
+        // Multiple atoms — find minimum distance pair
+        let minDist = Infinity;
+        bestI = -1; bestJ = -1;
+        for (const i of sel1) {
+          const ix = positions[i * 3], iy = positions[i * 3 + 1], iz = positions[i * 3 + 2];
+          for (const j of sel2) {
+            const dx = ix - positions[j * 3];
+            const dy = iy - positions[j * 3 + 1];
+            const dz = iz - positions[j * 3 + 2];
+            const d = dx * dx + dy * dy + dz * dz;
+            if (d < minDist) {
+              minDist = d;
+              bestI = i;
+              bestJ = j;
+            }
+          }
+        }
+        dist = Math.sqrt(minDist);
+      }
+
+      // Visualize the measured pair as a dashed line overlay
+      const pair = { a: Math.min(bestI, bestJ), b: Math.max(bestI, bestJ), distance: dist };
+      viewer.addInteractions(INTERACTION_TYPES.DISTANCE, [pair]);
+
+      const label = `Distance: ${dist.toFixed(2)} A  (${atomLabel(model, bestI)} \u2014 ${atomLabel(model, bestJ)})`;
+      if (sel1.size === 1 && sel2.size === 1) return label;
+      return label + `  [min of ${sel1.size}x${sel2.size} pairs]`;
+    },
+
+    get_distance(args) {
+      return commands.distance(args);
     },
 
     spectrum(args) {
@@ -422,14 +739,30 @@ export function createCommandInterpreter(viewer) {
       return `Rotated ${angle}\u00B0 around ${axis} axis`;
     },
 
+    set(args) {
+      if (!args) return 'Usage: set <setting>, <value>[, <sel>]\n  Settings: sphere_scale, stick_radius';
+      const [setting, rest] = splitComma(args);
+      if (!rest) return 'Usage: set <setting>, <value>[, <sel>]';
+      const key = setting.trim().toLowerCase();
+      if (key === 'sphere_scale' || key === 'stick_radius') {
+        const [valStr, selStr] = splitComma(rest);
+        const factor = parseFloat(valStr);
+        if (isNaN(factor) || factor < 0) return `Usage: set ${key}, <factor>[, <sel>]`;
+        const indices = selStr ? sel(selStr) : sel('all');
+        viewer.scaleAtoms(indices, factor);
+        return `Set ${key} to ${factor} for ${indices.size} atoms`;
+      }
+      return `Unknown setting: "${key}". Available: sphere_scale, stick_radius`;
+    },
+
     help() {
       return [
         'Commands:',
         '  select <name>, <sel>  Store named selection',
         '  color <color>, <sel>  Color atoms (default: all)',
-        '  show <sel>            Unhide atoms (default: all)',
+        '  show [rep,] <sel>     Show atoms; if rep given, assign that representation',
         '  hide <sel>            Hide atoms',
-        '  represent <mode>      spheres | sticks | lines (alias: rep)',
+        '  represent <mode>      cartoon | sticks | spheres | ball_and_stick (alias: rep)',
         '  zoom <sel>            Fit camera to selection',
         '  center <sel>          Orbit around selection centroid',
         '  orient <sel>          Orient for best view of selection',
@@ -439,6 +772,13 @@ export function createCommandInterpreter(viewer) {
         '  count_atoms <sel>     Count atoms in selection',
         '  selections / ls       List named selections',
         '  delete <name>         Delete named selection',
+        '  bond <s1>, <s2>[, cut]  Add bonds between selections (covalent radii or cutoff)',
+        '  unbond <s1>, <s2>     Remove bonds between selections',
+        '  contacts <type>, <s1>, <s2>[, cut]  Show interaction overlay (hbonds/salt_bridges/covalent/distance)',
+        '  contacts list [type]  List individual interaction distances',
+        '  contacts clear [type] Clear interaction overlays',
+        '  distance <s1>, <s2>   Measure distance between selections (alias: get_distance)',
+        '  set <key>, <val>[, <sel>]  Set property (sphere_scale, stick_radius)',
         '  spectrum <p>, <pal>, <sel>  Gradient color (p: count/b/chain)',
         '  set_color <name>, [r,g,b]  Define custom color',
         '  util.cbc <sel>        Color by chain (distinct colors)',
@@ -474,8 +814,9 @@ export function createCommandInterpreter(viewer) {
         '  and, or, not          Combine selections',
         '  ( )                   Group expressions',
         '  byres <sel>           Expand to full residues',
-        '  within 4.0 of <sel>   Atoms within distance (includes sel)',
-        '  around 4.0 of <sel>   Atoms within distance (excludes sel)',
+        '  within 4.0 of <sel>   Atoms within distance (includes sel). Goes BEFORE target:',
+        '                         e.g. "chain A and within 4.0 of chain B"',
+        '  around 4.0 of <sel>   Like within but excludes the target selection',
         '',
         'Colors: red green blue cyan magenta yellow white orange',
         '  pink salmon slate gray wheat violet marine olive teal',

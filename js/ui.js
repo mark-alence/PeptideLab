@@ -823,9 +823,9 @@ const REP_BUTTONS = [
   { key: 'lines',          label: 'Lines' },
 ];
 
-function RepToolbar({ currentRep, onRepChange, consoleVisible }) {
+function RepToolbar({ currentRep, onRepChange }) {
   return React.createElement('div', {
-    className: 'rep-toolbar' + (consoleVisible ? ' console-open' : ''),
+    className: 'rep-toolbar',
   },
     ...REP_BUTTONS.map(btn =>
       React.createElement('button', {
@@ -849,6 +849,7 @@ export function App() {
   const [consoleVisible, setConsoleVisible] = useState(false);
   const [currentRep, setCurrentRep] = useState('ball_and_stick');
   const [interpreter, setInterpreter] = useState(null);
+  const legendUpdateRef = React.useRef(null);
 
   const handleStart = useCallback(() => {
     setMode('builder');
@@ -881,7 +882,10 @@ export function App() {
   useEffect(() => {
     const onLoaded = (info) => setViewerInfo(info);
     const onError = (data) => setViewerError(data.message);
-    const onReady = (data) => { setInterpreter(data.interpreter); };
+    const onReady = (data) => {
+      setInterpreter(data.interpreter);
+      legendUpdateRef.current = data.onLegendUpdate || null;
+    };
     const onRepChanged = (data) => setCurrentRep(data.rep);
     GameEvents.on('viewerLoaded', onLoaded);
     GameEvents.on('viewerError', onError);
@@ -926,6 +930,7 @@ export function App() {
     setConsoleVisible(false);
     setCurrentRep('ball_and_stick');
     setInterpreter(null);
+    legendUpdateRef.current = null;
     handleBackToTitle();
   }, [handleBackToTitle]);
 
@@ -960,17 +965,17 @@ export function App() {
       React.createElement(RepToolbar, {
         currentRep,
         onRepChange: handleRepChange,
-        consoleVisible,
       }),
-      React.createElement('button', {
-        className: 'console-toggle-btn' + (consoleVisible ? ' console-open' : ''),
+      !consoleVisible && React.createElement('button', {
+        className: 'console-fab',
         onClick: toggleConsole,
         title: 'Toggle console (`)',
-      }, consoleVisible ? 'Close Console' : 'Console `'),
+      }, '>_'),
       React.createElement(PDBConsole, {
         visible: consoleVisible,
         interpreter: interpreter,
         onToggle: toggleConsole,
+        onLegendUpdate: legendUpdateRef.current,
       }),
     );
   }

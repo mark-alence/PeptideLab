@@ -1,6 +1,6 @@
 // ============================================================
-// console.js — PyMOL-style console React component
-// Docked to bottom of viewport in viewer mode.
+// console.js — Console panel React component
+// Right-side chat panel for viewer mode.
 // Supports "Command" mode (direct PyMOL) and "Ask AI" mode
 // (natural language → Claude API → commands).
 // ============================================================
@@ -10,14 +10,47 @@ import { translateToCommands } from './aiTranslator.js';
 const { useState, useEffect, useRef, useCallback } = React;
 const h = React.createElement;
 
+// Configure marked for markdown rendering (loaded via CDN)
+if (typeof marked !== 'undefined') {
+  marked.setOptions({ breaks: true, gfm: true });
+}
+
 const API_KEY_STORAGE = 'peptidelab_claude_api_key';
 
+// Categorize line types for bubble grouping
+function getBubbleCategory(type) {
+  if (type === 'command') return 'user';
+  if (type === 'error') return 'error';
+  if (type.startsWith('ai')) return 'ai';
+  return 'system';
+}
+
+// Group consecutive lines of the same category into bubbles
+function groupIntoBubbles(lines) {
+  const bubbles = [];
+  let current = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const cat = getBubbleCategory(line.type);
+
+    if (!current || current.category !== cat) {
+      if (current) bubbles.push(current);
+      current = { category: cat, lines: [line], key: i };
+    } else {
+      current.lines.push(line);
+    }
+  }
+  if (current) bubbles.push(current);
+  return bubbles;
+}
+
 /**
- * PDBConsole — interactive command console for the PDB viewer.
+ * PDBConsole — right-side chat panel for the PDB viewer.
  *
  * @param {{ visible: boolean, interpreter: Object, onToggle: () => void }} props
  */
-export function PDBConsole({ visible, interpreter, onToggle }) {
+export function PDBConsole({ visible, interpreter, onToggle, onLegendUpdate }) {
   const [lines, setLines] = useState([
     { type: 'output', text: 'PyMOL-style console. Type "help" for commands.' },
   ]);
@@ -32,6 +65,7 @@ export function PDBConsole({ visible, interpreter, onToggle }) {
   const inputRef = useRef(null);
   const settingsRef = useRef(null);
   const aiHistoryRef = useRef([]);
+  const commandLogRef = useRef([]);
 
   // Auto-scroll output to bottom
   useEffect(() => {
@@ -67,6 +101,11 @@ export function PDBConsole({ visible, interpreter, onToggle }) {
     setLines(prev => [...prev, ...newLines]);
   }, []);
 
+  const handleClear = useCallback(() => {
+    setLines([{ type: 'output', text: 'Console cleared.' }]);
+    aiHistoryRef.current = [];
+  }, []);
+
   // Execute a single command through the interpreter
   const execCommand = useCallback((cmd) => {
     if (!interpreter) return 'No interpreter available';
@@ -95,42 +134,39 @@ export function PDBConsole({ visible, interpreter, onToggle }) {
         }
       };
 
-      const { commands, message } = await translateToCommands(text, apiKey, interpreter, onProgress, aiHistoryRef.current);
+      const { commands, message } = await translateToCommands(text, apiKey, interpreter, onProgress, aiHistoryRef.current, onLegendUpdate, commandLogRef.current);
 
-      // Informational response — display as text
+      // Show informational text if present
       if (message) {
-        for (const line of message.split('\n')) {
-          addLine('output', line);
-        }
-        return;
+        addLine('ai-message', message);
       }
 
-      if (commands.length === 0) {
+      if (commands.length === 0 && !message) {
         addLine('error', 'AI returned no response.');
         return;
       }
 
-      // Show generated commands header
-      addLine('ai-label', 'Generated commands:');
-
-      // Execute each command and collect output
-      const outputLines = [];
-      for (const cmd of commands) {
-        outputLines.push({ type: 'ai-command', text: '  ' + cmd });
-        const result = execCommand(cmd);
-        if (result !== null) {
-          for (const rl of result.split('\n')) {
-            outputLines.push({ type: 'output', text: '  ' + rl });
+      if (commands.length > 0) {
+        addLine('ai-label', 'Generated commands:');
+        const outputLines = [];
+        for (const cmd of commands) {
+          outputLines.push({ type: 'ai-command', text: '  ' + cmd });
+          const result = execCommand(cmd);
+          commandLogRef.current.push({ cmd, result });
+          if (result !== null) {
+            for (const rl of result.split('\n')) {
+              outputLines.push({ type: 'output', text: '  ' + rl });
+            }
           }
         }
+        addLines(outputLines);
       }
-      addLines(outputLines);
     } catch (e) {
       addLine('error', 'AI error: ' + e.message);
     } finally {
       setBusy(false);
     }
-  }, [apiKey, addLine, addLines, execCommand, interpreter]);
+  }, [apiKey, addLine, addLines, execCommand, interpreter, onLegendUpdate]);
 
   const handleSubmit = useCallback(() => {
     const trimmed = input.trim();
@@ -156,9 +192,10 @@ export function PDBConsole({ visible, interpreter, onToggle }) {
       // Direct command execution
       if (interpreter) {
         const result = interpreter.execute(trimmed);
-        if (result !== null && result !== undefined) {
-          const resultLines = String(result).split('\n');
-          for (const line of resultLines) {
+        const resultStr = (result !== null && result !== undefined) ? String(result) : null;
+        commandLogRef.current.push({ cmd: trimmed, result: resultStr });
+        if (resultStr) {
+          for (const line of resultStr.split('\n')) {
             addLine('output', line);
           }
         }
@@ -215,68 +252,92 @@ export function PDBConsole({ visible, interpreter, onToggle }) {
     }
   }, []);
 
-  const handleModeToggle = useCallback(() => {
-    setMode(prev => prev === 'command' ? 'ai' : 'command');
-    if (inputRef.current) inputRef.current.focus();
-  }, []);
-
-  if (!visible) return null;
-
   const isAI = mode === 'ai';
+  const bubbles = groupIntoBubbles(lines);
 
-  return h('div', { className: 'pdb-console' },
-    // Output area
-    h('div', {
-      className: 'pdb-console-output',
-      ref: outputRef,
-    },
-      ...lines.map((line, i) =>
-        h('div', {
-          key: i,
-          className: `console-line console-${line.type}`,
-        }, line.text)
-      ),
-    ),
-    // Input row
-    h('div', { className: 'pdb-console-input-row' },
-      // Mode toggle
+  return h('div', { className: 'pdb-console-panel' + (visible ? ' open' : '') },
+    // Header
+    h('div', { className: 'console-panel-header' },
+      h('span', { className: 'console-panel-title' }, 'Console'),
       h('button', {
-        className: 'console-mode-toggle' + (isAI ? ' ai-active' : ''),
-        onClick: handleModeToggle,
-        title: isAI ? 'Switch to Command mode' : 'Switch to Ask AI mode',
-      }, isAI ? 'AI' : 'CMD'),
-      // Prompt
-      h('span', { className: 'console-prompt' + (isAI ? ' ai-prompt' : '') },
-        isAI ? 'Ask AI>' : 'PyMOL>'),
-      // Input
-      h('input', {
-        ref: inputRef,
-        className: 'pdb-console-input' + (isAI ? ' ai-input' : ''),
-        type: 'text',
-        value: input,
-        placeholder: isAI ? 'Describe what you want in plain English...' : '',
-        onChange: (e) => { setInput(e.target.value); setHistIdx(-1); },
-        onKeyDown: handleKeyDown,
-        spellCheck: isAI,
-        autoComplete: 'off',
-        disabled: busy,
-      }),
-      // Busy indicator
-      busy && h('span', { className: 'console-busy' }, '...'),
-      // Settings gear
+        className: 'console-panel-btn',
+        onClick: handleClear,
+        title: 'Clear output',
+      }, '\u232B'),
+      // Settings
       h('div', { className: 'console-settings-wrap', ref: settingsRef },
         h('button', {
           className: 'console-settings-btn' + (isAI && !apiKey ? ' needs-key' : ''),
           onClick: () => setShowSettings(v => !v),
           title: 'API key settings',
         }, '\u2699'),
-        // Settings popover
         showSettings && h(ApiKeyPopover, {
           apiKey,
           onSave: handleApiKeySave,
           onClose: () => setShowSettings(false),
         }),
       ),
+      h('button', {
+        className: 'console-panel-btn',
+        onClick: onToggle,
+        title: 'Close (Esc)',
+      }, '\u00D7'),
+    ),
+    // Tabs
+    h('div', { className: 'console-tabs' },
+      h('button', {
+        className: 'console-tab' + (mode === 'command' ? ' active-cmd' : ''),
+        onClick: () => { setMode('command'); if (inputRef.current) inputRef.current.focus(); },
+      }, 'Command'),
+      h('button', {
+        className: 'console-tab' + (mode === 'ai' ? ' active-ai' : ''),
+        onClick: () => { setMode('ai'); if (inputRef.current) inputRef.current.focus(); },
+      }, 'Ask AI'),
+    ),
+    // Output area with chat bubbles
+    h('div', { className: 'pdb-console-output', ref: outputRef },
+      ...bubbles.map(bubble =>
+        h('div', { key: bubble.key, className: 'console-bubble ' + bubble.category },
+          ...bubble.lines.map((line, j) => {
+            if (line.type === 'ai-message' && typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+              return h('div', {
+                key: j,
+                className: 'console-line console-ai-message',
+                dangerouslySetInnerHTML: {
+                  __html: DOMPurify.sanitize(marked.parse(line.text)),
+                },
+              });
+            }
+            return h('div', {
+              key: j,
+              className: `console-line console-${line.type}`,
+            }, line.text);
+          }),
+        )
+      ),
+    ),
+    // Input area
+    h('div', { className: 'console-input-area' },
+      h('div', { className: 'console-input-wrap' + (isAI ? ' ai' : '') },
+        h('input', {
+          ref: inputRef,
+          className: 'pdb-console-input' + (isAI ? ' ai-input' : ''),
+          type: 'text',
+          value: input,
+          placeholder: isAI ? 'Ask about this structure...' : 'Enter PyMOL command...',
+          onChange: (e) => { setInput(e.target.value); setHistIdx(-1); },
+          onKeyDown: handleKeyDown,
+          spellCheck: isAI,
+          autoComplete: 'off',
+          disabled: busy,
+        }),
+      ),
+      h('button', {
+        className: 'console-send-btn' + (isAI ? ' ai' : ''),
+        onClick: handleSubmit,
+        disabled: busy || !input.trim(),
+        title: 'Send (Enter)',
+      }, busy ? '\u2026' : '\u2192'),
     ),
   );
 }

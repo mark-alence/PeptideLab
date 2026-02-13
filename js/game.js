@@ -20,10 +20,12 @@ import { SCALE } from './renderer3d.js';
 // PDB Viewer
 import { PDBViewer } from './pdb/viewer.js';
 import { createCommandInterpreter, setRepChangedCallback } from './pdb/commands.js';
+import { createLegendOverlay } from './pdb/legendOverlay.js';
 
 let pdbViewer = null;
 let viewerLoop = false;
 let cmdInterpreter = null;
+let legendOverlay = null;
 
 // --- Dev: post game state to server ---
 function postGameState() {
@@ -169,12 +171,18 @@ GameEvents.on('enterViewerMode', (data) => {
     const info = pdbViewer.getInfo();
     GameEvents.emit('viewerLoaded', info);
 
+    // Create legend overlay
+    legendOverlay = createLegendOverlay(renderer.domElement.parentElement);
+
     // Create command interpreter and notify UI
     cmdInterpreter = createCommandInterpreter(pdbViewer);
     setRepChangedCallback((repType) => {
       GameEvents.emit('viewerRepChanged', { rep: repType });
     });
-    GameEvents.emit('viewerReady', { interpreter: cmdInterpreter });
+    GameEvents.emit('viewerReady', {
+      interpreter: cmdInterpreter,
+      onLegendUpdate: (data) => legendOverlay.update(data),
+    });
   } else {
     GameEvents.emit('viewerError', { message: 'Failed to parse PDB file' });
   }
@@ -193,6 +201,10 @@ GameEvents.on('viewerRepChange', (data) => {
 });
 
 GameEvents.on('exitViewerMode', () => {
+  if (legendOverlay) {
+    legendOverlay.dispose();
+    legendOverlay = null;
+  }
   if (pdbViewer) {
     pdbViewer.dispose();
     pdbViewer = null;

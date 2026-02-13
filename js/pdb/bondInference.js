@@ -65,6 +65,42 @@ export function inferBonds(model) {
     }
   }
 
+  // 1b. Bond unbonded hydrogens to nearest heavy atom in same residue
+  // Templates only have heavy atoms, so H atoms need distance-based bonding.
+  for (const res of residues) {
+    if (!res.isStandard) continue;
+    for (let j = res.atomStart; j < res.atomEnd; j++) {
+      if (atoms[j].element !== 'H') continue;
+      // Check if already bonded (e.g. from CONECT or template)
+      const key1 = j * atoms.length;
+      let bonded = false;
+      for (let k = res.atomStart; k < res.atomEnd; k++) {
+        if (k === j) continue;
+        const a = Math.min(j, k), b = Math.max(j, k);
+        if (bondSet.has(a * atoms.length + b)) { bonded = true; break; }
+      }
+      if (bonded) continue;
+      // Find closest heavy atom within covalent bond distance
+      const rH = COVALENT_RADII.H;
+      let bestK = -1, bestD2 = Infinity;
+      for (let k = res.atomStart; k < res.atomEnd; k++) {
+        if (k === j || atoms[k].element === 'H') continue;
+        const dx = positions[k * 3] - positions[j * 3];
+        const dy = positions[k * 3 + 1] - positions[j * 3 + 1];
+        const dz = positions[k * 3 + 2] - positions[j * 3 + 2];
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < bestD2) { bestD2 = d2; bestK = k; }
+      }
+      if (bestK >= 0) {
+        const rK = COVALENT_RADII[atoms[bestK].element] || DEFAULT_RADIUS;
+        const maxDist = rH + rK + BOND_TOLERANCE;
+        if (bestD2 < maxDist * maxDist && bestD2 > 0.16) {
+          addBond(j, bestK);
+        }
+      }
+    }
+  }
+
   // 2. Peptide bonds: C of residue i → N of residue i+1 (same chain)
   for (const chain of chains) {
     for (let ri = chain.residueStart; ri < chain.residueEnd - 1; ri++) {
@@ -102,6 +138,86 @@ export function inferBonds(model) {
   // 4. CONECT records (explicit bonds, typically for ligands)
   for (const [i, j] of conectBonds) {
     addBond(i, j);
+  }
+
+  return new Uint32Array(bonds);
+}
+
+/**
+ * Find bonds between two atom selections using distance criteria.
+ * Uses spatial hashing for efficiency.
+ *
+ * @param {Object} model - Parsed PDB model
+ * @param {Set<number>} sel1 - First atom selection
+ * @param {Set<number>} sel2 - Second atom selection
+ * @param {number|null} cutoff - Distance cutoff in Angstroms (null = covalent radii)
+ * @returns {Uint32Array} Flat pairs [a0,b0, a1,b1, ...] of new bonds found
+ */
+export function findBondsBetween(model, sel1, sel2, cutoff) {
+  const { atoms, positions } = model;
+  const useCovalent = cutoff == null;
+  const maxDist = useCovalent ? MAX_BOND_DIST : cutoff;
+  const bonds = [];
+  const seen = new Set();
+
+  // Build spatial hash from sel2 atoms
+  const cellSize = maxDist;
+  const invCell = 1 / cellSize;
+  const cellMap = new Map();
+
+  for (const j of sel2) {
+    const cx = Math.floor(positions[j * 3] * invCell);
+    const cy = Math.floor(positions[j * 3 + 1] * invCell);
+    const cz = Math.floor(positions[j * 3 + 2] * invCell);
+    const key = `${cx},${cy},${cz}`;
+    let cell = cellMap.get(key);
+    if (!cell) { cell = []; cellMap.set(key, cell); }
+    cell.push(j);
+  }
+
+  // For each atom in sel1, check neighboring cells in sel2
+  for (const i of sel1) {
+    const ix = positions[i * 3], iy = positions[i * 3 + 1], iz = positions[i * 3 + 2];
+    const ri = useCovalent ? (COVALENT_RADII[atoms[i].element] || DEFAULT_RADIUS) : 0;
+
+    const cx = Math.floor(ix * invCell);
+    const cy = Math.floor(iy * invCell);
+    const cz = Math.floor(iz * invCell);
+
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const cell = cellMap.get(`${cx + dx},${cy + dy},${cz + dz}`);
+          if (!cell) continue;
+
+          for (const j of cell) {
+            if (i === j) continue;
+            const a = Math.min(i, j);
+            const b = Math.max(i, j);
+            const pairKey = a * atoms.length + b;
+            if (seen.has(pairKey)) continue;
+
+            const ddx = positions[j * 3] - ix;
+            const ddy = positions[j * 3 + 1] - iy;
+            const ddz = positions[j * 3 + 2] - iz;
+            const d2 = ddx * ddx + ddy * ddy + ddz * ddz;
+
+            let threshold;
+            if (useCovalent) {
+              const rj = COVALENT_RADII[atoms[j].element] || DEFAULT_RADIUS;
+              threshold = ri + rj + BOND_TOLERANCE;
+            } else {
+              threshold = cutoff;
+            }
+
+            if (d2 < threshold * threshold && d2 > 0.16) {
+              seen.add(pairKey);
+              bonds.push(a, b);
+            }
+          }
+        }
+      }
+    }
   }
 
   return new Uint32Array(bonds);
