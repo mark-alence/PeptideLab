@@ -168,11 +168,16 @@ export function getCanvas() {
 
 // --- Viewer mode controls ---
 export function configureViewerControls() {
-  // TrackballControls on all devices — quaternion-based, no gimbal lock
+  const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
+
   orbitControls.enabled = false;
   trackballControls.target.copy(orbitControls.target);
   trackballControls.minDistance = 0;
   trackballControls.maxDistance = Infinity;
+  // Disable pan on touch devices: TrackballControls' TOUCH_ZOOM_PAN
+  // combines zoom and pan simultaneously, causing erratic pinch-zoom.
+  // With noPan the two-finger gesture cleanly zooms only.
+  trackballControls.noPan = isTouchDevice;
   trackballControls.enabled = true;
   trackballControls.handleResize();
   controls = trackballControls;
