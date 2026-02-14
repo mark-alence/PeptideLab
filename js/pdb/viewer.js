@@ -30,6 +30,176 @@ const REP_CLASSES = {
   [REP_TYPES.LINES]:          LinesRepresentation,
 };
 
+// ============================================================
+// Atom removal helpers
+// ============================================================
+
+/**
+ * Build a new model with specified atoms removed.
+ * Returns { model, indexMap } where indexMap maps old local index → new local index.
+ *
+ * @param {Object} model - parsePDB-style model
+ * @param {Set<number>} indicesToRemove - local atom indices to remove
+ * @returns {{ model: Object, indexMap: Map<number, number> }}
+ */
+function rebuildModelWithoutAtoms(model, indicesToRemove) {
+  const oldCount = model.atomCount;
+  const indexMap = new Map();
+  let newIdx = 0;
+  for (let i = 0; i < oldCount; i++) {
+    if (!indicesToRemove.has(i)) {
+      indexMap.set(i, newIdx++);
+    }
+  }
+  const newCount = newIdx;
+
+  // Filter atoms array
+  const newAtoms = [];
+  for (let i = 0; i < oldCount; i++) {
+    if (!indicesToRemove.has(i)) newAtoms.push(model.atoms[i]);
+  }
+
+  // Filter positions
+  const newPositions = new Float32Array(newCount * 3);
+  for (const [oldI, newI] of indexMap) {
+    newPositions[newI * 3]     = model.positions[oldI * 3];
+    newPositions[newI * 3 + 1] = model.positions[oldI * 3 + 1];
+    newPositions[newI * 3 + 2] = model.positions[oldI * 3 + 2];
+  }
+
+  // Filter bFactors
+  const newBFactors = new Float32Array(newCount);
+  for (const [oldI, newI] of indexMap) {
+    newBFactors[newI] = model.bFactors[oldI];
+  }
+
+  // Filter elements
+  const newElements = new Uint8Array(newCount);
+  for (const [oldI, newI] of indexMap) {
+    newElements[newI] = model.elements[oldI];
+  }
+
+  // Filter isHet
+  const newIsHet = new Uint8Array(newCount);
+  for (const [oldI, newI] of indexMap) {
+    newIsHet[newI] = model.isHet[oldI];
+  }
+
+  // Rebuild residues — remap atom indices, drop empty residues
+  const newResidues = [];
+  for (const res of model.residues) {
+    let newStart = newCount; // sentinel: past end
+    let newEnd = 0;
+    for (let i = res.atomStart; i < res.atomEnd; i++) {
+      const ni = indexMap.get(i);
+      if (ni !== undefined) {
+        if (ni < newStart) newStart = ni;
+        if (ni + 1 > newEnd) newEnd = ni + 1;
+      }
+    }
+    if (newStart >= newEnd) continue; // residue has 0 remaining atoms
+
+    const remapSpecial = (idx) => {
+      if (idx < 0) return -1;
+      const ni = indexMap.get(idx);
+      return ni !== undefined ? ni : -1;
+    };
+
+    newResidues.push({
+      ...res,
+      atomStart: newStart,
+      atomEnd: newEnd,
+      caIndex: remapSpecial(res.caIndex),
+      cIndex: remapSpecial(res.cIndex),
+      nIndex: remapSpecial(res.nIndex),
+    });
+  }
+
+  // Rebuild chains — remap residue indices, drop empty chains
+  // Build old residue index → new residue index map
+  const oldResidues = model.residues;
+  const residueMap = new Map();
+  let newResIdx = 0;
+  for (let ri = 0; ri < oldResidues.length; ri++) {
+    const res = oldResidues[ri];
+    // Check if this residue survived (has any atom in indexMap)
+    let survived = false;
+    for (let i = res.atomStart; i < res.atomEnd; i++) {
+      if (indexMap.has(i)) { survived = true; break; }
+    }
+    if (survived) {
+      residueMap.set(ri, newResIdx++);
+    }
+  }
+
+  const newChains = [];
+  for (const chain of model.chains) {
+    let newResStart = newResidues.length; // sentinel
+    let newResEnd = 0;
+    for (let ri = chain.residueStart; ri < chain.residueEnd; ri++) {
+      const nri = residueMap.get(ri);
+      if (nri !== undefined) {
+        if (nri < newResStart) newResStart = nri;
+        if (nri + 1 > newResEnd) newResEnd = nri + 1;
+      }
+    }
+    if (newResStart >= newResEnd) continue; // chain has 0 remaining residues
+    newChains.push({
+      ...chain,
+      residueStart: newResStart,
+      residueEnd: newResEnd,
+    });
+  }
+
+  // Filter conectBonds
+  const newConectBonds = [];
+  for (const [i, j] of model.conectBonds) {
+    const ni = indexMap.get(i);
+    const nj = indexMap.get(j);
+    if (ni !== undefined && nj !== undefined) {
+      newConectBonds.push([ni, nj]);
+    }
+  }
+
+  const newModel = {
+    atoms: newAtoms,
+    atomCount: newCount,
+    positions: newPositions,
+    bFactors: newBFactors,
+    elements: newElements,
+    elementList: model.elementList,
+    isHet: newIsHet,
+    residues: newResidues,
+    chains: newChains,
+    conectBonds: newConectBonds,
+    header: model.header,
+  };
+
+  return { model: newModel, indexMap };
+}
+
+/**
+ * Filter and remap a bond Uint32Array, removing bonds touching removed atoms.
+ *
+ * @param {Uint32Array} bonds - Flat bond pairs [a0,b0, a1,b1, ...]
+ * @param {Set<number>} indicesToRemove - local atom indices being removed
+ * @param {Map<number, number>} indexMap - old → new index mapping
+ * @returns {Uint32Array} New bond array with surviving bonds remapped
+ */
+function rebuildBondsWithoutAtoms(bonds, indicesToRemove, indexMap) {
+  const kept = [];
+  for (let i = 0; i < bonds.length; i += 2) {
+    const a = bonds[i], b = bonds[i + 1];
+    if (indicesToRemove.has(a) || indicesToRemove.has(b)) continue;
+    const na = indexMap.get(a);
+    const nb = indexMap.get(b);
+    if (na !== undefined && nb !== undefined) {
+      kept.push(na, nb);
+    }
+  }
+  return new Uint32Array(kept);
+}
+
 /**
  * PDBViewer — controls the viewer mode lifecycle.
  * Created once when entering viewer mode, disposed when leaving.
@@ -139,6 +309,69 @@ export class PDBViewer {
     this._rebuildMergedState();
     this._centerCamera();
     return true;
+  }
+
+  /**
+   * Permanently remove atoms by global index from loaded structures.
+   * Rebuilds each affected structure's model/bonds, removes empty structures,
+   * and rebuilds the merged state.
+   *
+   * @param {Set<number>} globalIndices - Global atom indices to remove
+   */
+  removeAtoms(globalIndices) {
+    if (!this.model || globalIndices.size === 0) return;
+
+    const ranges = this.model._structureRanges;
+    if (!ranges) return;
+
+    // Partition global indices into per-structure local index sets
+    const perStructure = new Map(); // key (lowercase name) → Set<localIndex>
+    for (const gi of globalIndices) {
+      for (const [key, range] of ranges) {
+        if (gi >= range.atomOffset && gi < range.atomOffset + range.atomCount) {
+          if (!perStructure.has(key)) perStructure.set(key, new Set());
+          perStructure.get(key).add(gi - range.atomOffset);
+          break;
+        }
+      }
+    }
+
+    // Rebuild each affected structure
+    const toRemoveKeys = [];
+    for (const [key, localIndices] of perStructure) {
+      const entry = this.structureManager.structures.get(key);
+      if (!entry) continue;
+
+      // If removing all atoms from this structure, mark for removal
+      if (localIndices.size >= entry.atomCount) {
+        toRemoveKeys.push(key);
+        continue;
+      }
+
+      // Rebuild model without removed atoms
+      const { model: newModel, indexMap } = rebuildModelWithoutAtoms(entry.model, localIndices);
+      const newBonds = rebuildBondsWithoutAtoms(entry.bonds, localIndices, indexMap);
+
+      entry.model = newModel;
+      entry.bonds = newBonds;
+      entry.atomCount = newModel.atomCount;
+    }
+
+    // Remove structures that lost all atoms
+    for (const key of toRemoveKeys) {
+      this.structureManager.structures.delete(key);
+      this.structureManager._insertionOrder = this.structureManager._insertionOrder.filter(k => k !== key);
+    }
+
+    // If nothing left, clear everything
+    if (this.structureManager.count === 0) {
+      this.clearStructure();
+      return;
+    }
+
+    // Recalculate offsets and rebuild merged state
+    this.structureManager._recalculateOffsets();
+    this._rebuildMergedState();
   }
 
   /**

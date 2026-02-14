@@ -816,10 +816,33 @@ export function createCommandInterpreter(viewer) {
     },
 
     remove(args) {
+      const model = getModel();
+      if (!model) return 'No structure loaded';
+
       const name = (args || '').trim();
-      if (!name) return 'Usage: remove <structure_name>';
+      if (!name) return 'Usage: remove <selection> or remove <structure_name>';
+
+      // Try parsing as a selection expression first
+      let indices = null;
+      try {
+        indices = sel(name);
+      } catch (e) {
+        indices = null;
+      }
+
+      if (indices && indices.size > 0) {
+        // Atom-level removal
+        const count = indices.size;
+        viewer.removeAtoms(indices);
+        namedSelections.clear();
+        const info = viewer.getInfo();
+        if (info) GameEvents.emit('viewerLoaded', info);
+        return `Removed ${count} atoms`;
+      }
+
+      // Fallback: try as structure name (current behavior)
       const removed = viewer.removeStructure(name);
-      if (!removed) return `Structure "${name}" not found. Use "list" to see loaded structures.`;
+      if (!removed) return `No atoms matched and no structure "${name}" found.`;
       const info = viewer.getInfo();
       if (info) GameEvents.emit('viewerLoaded', info);
       return `Removed structure "${name}"`;
@@ -869,7 +892,7 @@ export function createCommandInterpreter(viewer) {
         'Multi-structure:',
         '  load <PDB_ID>         Fetch & add structure from RCSB',
         '  align <mob>, <tgt>    Superpose mobile onto target (Kabsch on CAs)',
-        '  remove <name>         Remove a loaded structure',
+        '  remove <sel>          Remove atoms matching selection (e.g., remove solvent). Also removes a structure by name.',
         '  list                  List all loaded structures',
         '',
         'Representations:',

@@ -209,7 +209,7 @@ Available commands:
   util.ss <sel>          — Color by secondary structure (helix=red, sheet=yellow, loop=green)
   load <PDB_ID>          — Fetch and add a structure from RCSB (async)
   align <mobile>, <target> — Superpose mobile structure onto target using Kabsch on CA atoms
-  remove <name>          — Remove a loaded structure
+  remove <sel>           — Permanently delete atoms matching selection (e.g., remove solvent, remove hydrogens, remove chain B). Also removes a loaded structure by name as fallback.
   list                   — List all loaded structures with atom counts and colors
 
 Selection syntax:
@@ -242,6 +242,51 @@ Selection syntax:
 Colors: red green blue cyan magenta yellow white orange pink salmon slate gray wheat violet marine olive teal forest firebrick chocolate black lime purple gold hotpink skyblue lightblue deepblue carbon nitrogen oxygen sulfur. Also hex: #FF0000 or 0xFF0000.
 
 Color guidelines: Choose colors that are visually distinct from each other — never pair similar shades (e.g. blue/marine/skyblue, or red/salmon/firebrick) in the same visualization. Prefer high-contrast combinations like red+blue, green+magenta, cyan+orange, yellow+purple. Never change the background color (bg_color) unless the user explicitly asks for it.
+
+Visualization principles — follow these like a structural biologist would:
+
+Choosing representations:
+  - Cartoon: overall fold, secondary structure, chain topology. Best for proteins >50 residues as the primary view.
+  - Sticks: atomic detail for specific residues — active sites, ligand-binding residues, mutations. NOT for an entire large protein.
+  - Ball-and-stick: small molecules, ligands, coordination chemistry, bond angles. Good default for non-polymer HETATM.
+  - Spacefill: molecular volume, steric bulk, shape complementarity. Use when the question is about size/packing.
+  - Lines: minimal context, background, or very large structures where detail is not needed.
+
+Multi-representation scenes (the standard in structural biology):
+  Different parts of the structure should often use different representations simultaneously. Use "show <rep>, <sel>" to set per-selection representations. Common patterns:
+  - Protein overview: "show cartoon, polymer" then "color gray, polymer" — simple, clean starting point.
+  - Ligand binding site: cartoon for protein (muted color like gray or wheat), sticks for ligand + nearby residues, zoom to site.
+  - Active site highlight: cartoon for full protein, sticks for catalytic/key residues only.
+  - Mutation site: cartoon for context, sticks (or spheres) for mutated residue in a hot color (red, magenta).
+  - Multi-chain complex: cartoon for all, then util.cbc for chain distinction.
+
+Focus/context visual hierarchy:
+  Apply the 60-30-10 rule — 60% muted context, 30% region of interest, 10% accent highlight.
+  - Context (bulk of protein): muted colors — gray, wheat, lightblue, or pale tones. Cartoon or lines.
+  - Focus (region of interest): saturated distinct colors. Sticks or ball-and-stick.
+  - Accent (ligand, mutation, key residue): bright saturated color. Sticks or spheres.
+  When the user asks to "highlight" or "show" a specific region, default to making the rest muted (gray cartoon) and the focus vivid, UNLESS they've already set up a color scheme you'd be disrupting.
+
+Carbon-only recoloring (standard convention):
+  When distinguishing entities (e.g., ligand vs protein residues), recolor only carbon atoms to a highlight color while preserving element colors on N (blue), O (red), S (yellow) for chemical readability. Do this by:
+  1. "color <highlight>, <sel> and elem C" — set carbons to the highlight color
+  2. "color atomic, <sel> and not elem C" — reset non-carbons to element colors
+  Use different carbon colors for different entities (e.g., green carbons on ligand, salmon carbons on protein active-site residues). This is the standard in every structural biology publication.
+
+CRITICAL — always select whole residues:
+  "within"/"around" select individual ATOMS, not residues. This causes half-colored, half-visible residues. ALWAYS wrap distance selections with "byres" when showing, hiding, or coloring residues:
+    WRONG: color green, within 5 of organic           — clips residues, partial coloring
+    RIGHT: color green, byres within 5 of organic     — complete residues
+    WRONG: show sticks, polymer within 4 of resn ATP  — half-residues shown
+    RIGHT: show sticks, byres polymer within 4 of resn ATP
+  The ONLY exception is when you intentionally want per-atom granularity (rare). For virtually all visualization tasks, use "byres".
+
+Avoid these common mistakes:
+  - Showing an entire large protein as sticks or ball-and-stick — unreadable clutter. Use cartoon for the bulk.
+  - Using more than 6-8 distinct colors in one scene — becomes noise. Mute the context.
+  - Coloring everything in saturated bright colors — nothing stands out. Reserve bright colors for focal points.
+  - Applying a single flat color to atoms you want chemical detail on — use element coloring or carbon-only recoloring.
+  - Using "represent" (global) when you should use "show <rep>, <sel>" (targeted) — "represent" changes ALL atoms, overriding any multi-representation setup.
 
 When you execute visual commands (color, show/hide, represent, spectrum, util.cbc, util.ss, etc.), ALWAYS call the update_legend tool to describe what the visualization shows. Include all relevant color-to-meaning mappings.${structureCtx}${visualStateCtx}
 
