@@ -4,7 +4,6 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { TrackballControls } from 'three/addons/controls/TrackballControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { GRID_W, GRID_H } from './constants.js';
 import { GameEvents } from './ui.js';
@@ -73,22 +72,11 @@ orbitControls.touches = {
 };
 orbitControls.update();
 
-// --- TrackballControls (viewer mode — infinite free rotation) ---
-const trackballControls = new TrackballControls(camera3D, renderer.domElement);
-trackballControls.rotateSpeed = 2.0;
-trackballControls.zoomSpeed = 1.2;
-trackballControls.panSpeed = 0.8;
-trackballControls.dynamicDampingFactor = 0.12;
-trackballControls.enabled = false;
-
-// Active controls reference (live ES module binding)
-export let controls = orbitControls;
+export const controls = orbitControls;
 
 // --- Camera gesture events (fade UI during orbit/pan/zoom) ---
 orbitControls.addEventListener('start', () => GameEvents.emit('cameraGestureStart'));
 orbitControls.addEventListener('end', () => GameEvents.emit('cameraGestureEnd'));
-trackballControls.addEventListener('start', () => GameEvents.emit('cameraGestureStart'));
-trackballControls.addEventListener('end', () => GameEvents.emit('cameraGestureEnd'));
 
 // --- Camera focus: smoothly animate target to a world position ---
 const defaultTarget = new THREE.Vector3(cx, 0, cz);
@@ -158,7 +146,6 @@ export function resize3D() {
   camera3D.updateProjectionMatrix();
   renderer.setSize(w, h);
   cssRenderer.setSize(w, h);
-  trackballControls.handleResize();
 }
 
 // --- Expose renderer canvas for raycasting ---
@@ -166,62 +153,3 @@ export function getCanvas() {
   return renderer.domElement;
 }
 
-// --- Viewer mode controls ---
-export function configureViewerControls() {
-  const isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
-
-  orbitControls.enabled = false;
-  trackballControls.target.copy(orbitControls.target);
-  trackballControls.minDistance = 0;
-  trackballControls.maxDistance = Infinity;
-  // Disable pan on touch devices: TrackballControls' TOUCH_ZOOM_PAN
-  // combines zoom and pan simultaneously, causing erratic pinch-zoom.
-  // With noPan the two-finger gesture cleanly zooms only.
-  trackballControls.noPan = isTouchDevice;
-  trackballControls.enabled = true;
-  trackballControls.handleResize();
-  controls = trackballControls;
-}
-
-// --- Restore builder mode controls ---
-export function configureBuilderControls() {
-  const cx = GRID_W / 2;
-  const cz = GRID_H / 2;
-  trackballControls.enabled = false;
-
-  orbitControls.enabled = true;
-  orbitControls.maxPolarAngle = Math.PI / 2 - 0.05;
-  orbitControls.minDistance = 10;
-  orbitControls.maxDistance = 80;
-  orbitControls.target.set(cx, 0, cz);
-  camera3D.position.set(cx, 25, cz + 30);
-  camera3D.near = 0.1;
-  camera3D.far = 500;
-  camera3D.updateProjectionMatrix();
-  orbitControls.update();
-
-  controls = orbitControls;
-}
-
-// --- Scene background / fog / lighting control for viewer mode ---
-export function setViewerBackground() {
-  scene.fog = null;
-  // Hide builder lights — viewer adds its own
-  ambientLight.visible = false;
-  hemiLight.visible = false;
-  dirLight.visible = false;
-  // ACES tone mapping for cinematic look (MeshStandardMaterial handles it well)
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
-}
-
-export function setBuilderBackground() {
-  scene.background = new THREE.Color(0x1e2a3d);
-  scene.fog = new THREE.FogExp2(0x1e2a3d, 0.003);
-  // Restore builder lights
-  ambientLight.visible = true;
-  hemiLight.visible = true;
-  dirLight.visible = true;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.7;
-}
